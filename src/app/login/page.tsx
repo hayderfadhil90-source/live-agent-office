@@ -31,8 +31,7 @@ export default function LoginPage() {
       return;
     }
 
-    router.push("/workspace");
-    router.refresh();
+    window.location.href = "/workspace";
   };
 
   return (
