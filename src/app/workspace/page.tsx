@@ -1,41 +1,63 @@
-import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { WorkspaceSetup } from "./WorkspaceSetup";
+import { FullPageLoader } from "@/components/ui/LoadingSpinner";
 import type { Workspace, Agent } from "@/lib/types";
 
-export default async function WorkspacePage() {
-  const supabase = await createClient();
+export default function WorkspacePage() {
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [agent, setAgent] = useState<Agent | null>(null);
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  useEffect(() => {
+    const supabase = createClient();
 
-  if (!user) redirect("/login");
+    async function load() {
+      const { data: { user } } = await supabase.auth.getUser();
 
-  // Fetch existing workspace
-  const { data: workspace } = await supabase
-    .from("workspaces")
-    .select("*")
-    .eq("user_id", user.id)
-    .single();
+      if (!user) {
+        router.push("/login");
+        return;
+      }
 
-  // If workspace exists, also fetch the agent
-  let agent: Agent | null = null;
-  if (workspace) {
-    const { data } = await supabase
-      .from("agents")
-      .select("*")
-      .eq("workspace_id", workspace.id)
-      .single();
-    agent = data;
-  }
+      setUserId(user.id);
+
+      const { data: ws } = await supabase
+        .from("workspaces")
+        .select("*")
+        .eq("user_id", user.id)
+        .single();
+
+      setWorkspace(ws);
+
+      if (ws) {
+        const { data: ag } = await supabase
+          .from("agents")
+          .select("*")
+          .eq("workspace_id", ws.id)
+          .single();
+        setAgent(ag);
+      }
+
+      setLoading(false);
+    }
+
+    load();
+  }, [router]);
+
+  if (loading) return <FullPageLoader />;
 
   return (
     <DashboardLayout>
       <WorkspaceSetup
-        userId={user.id}
-        workspace={workspace as Workspace | null}
+        userId={userId!}
+        workspace={workspace}
         agent={agent}
       />
     </DashboardLayout>

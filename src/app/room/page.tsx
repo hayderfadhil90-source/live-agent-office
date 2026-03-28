@@ -1,47 +1,64 @@
-import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { LiveRoom } from "./LiveRoom";
+import { FullPageLoader } from "@/components/ui/LoadingSpinner";
 import type { Agent, AgentEvent } from "@/lib/types";
 
-export default async function RoomPage() {
-  const supabase = await createClient();
+export default function RoomPage() {
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [agent, setAgent] = useState<Agent | null>(null);
+  const [events, setEvents] = useState<AgentEvent[]>([]);
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  useEffect(() => {
+    const supabase = createClient();
 
-  const { data: workspace } = await supabase
-    .from("workspaces")
-    .select("*")
-    .eq("user_id", user.id)
-    .single();
+    async function load() {
+      const { data: { user } } = await supabase.auth.getUser();
 
-  if (!workspace) redirect("/workspace");
+      if (!user) { router.push("/login"); return; }
 
-  const { data: agent } = await supabase
-    .from("agents")
-    .select("*")
-    .eq("workspace_id", workspace.id)
-    .single();
+      const { data: ws } = await supabase
+        .from("workspaces")
+        .select("*")
+        .eq("user_id", user.id)
+        .single();
 
-  if (!agent) redirect("/agent");
+      if (!ws) { router.push("/workspace"); return; }
 
-  // Fetch recent events (last 50)
-  const { data: events } = await supabase
-    .from("events")
-    .select("*")
-    .eq("agent_id", agent.id)
-    .order("created_at", { ascending: false })
-    .limit(50);
+      const { data: ag } = await supabase
+        .from("agents")
+        .select("*")
+        .eq("workspace_id", ws.id)
+        .single();
+
+      if (!ag) { router.push("/agent"); return; }
+
+      setAgent(ag);
+
+      const { data: evs } = await supabase
+        .from("events")
+        .select("*")
+        .eq("agent_id", ag.id)
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      setEvents(evs ?? []);
+      setLoading(false);
+    }
+
+    load();
+  }, [router]);
+
+  if (loading) return <FullPageLoader />;
 
   return (
     <DashboardLayout>
-      <LiveRoom
-        agent={agent as Agent}
-        initialEvents={(events ?? []) as AgentEvent[]}
-      />
+      <LiveRoom agent={agent!} initialEvents={events} />
     </DashboardLayout>
   );
 }
