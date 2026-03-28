@@ -25,28 +25,9 @@ export async function updateSession(request: NextRequest) {
     }
   );
 
-  // Refresh session — do NOT add any logic between createServerClient and getUser
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  const url = request.nextUrl.clone();
-  const isAuthRoute =
-    url.pathname.startsWith("/login") || url.pathname.startsWith("/signup");
-  const isDashboardRoute =
-    url.pathname.startsWith("/workspace") ||
-    url.pathname.startsWith("/agent") ||
-    url.pathname.startsWith("/room");
-
-  if (!user && isDashboardRoute) {
-    url.pathname = "/login";
-    return NextResponse.redirect(url);
-  }
-
-  if (user && isAuthRoute) {
-    url.pathname = "/workspace";
-    return NextResponse.redirect(url);
-  }
+  // Refresh the session — this is all the middleware needs to do.
+  // Each page's server component handles its own auth redirect.
+  await supabase.auth.getUser();
 
   return supabaseResponse;
 }
