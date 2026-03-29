@@ -3,15 +3,12 @@
 import { useEffect, useRef } from "react";
 import type { Agent, AgentStatus } from "@/lib/types";
 
-interface Props {
-  agent: Agent;
-}
+interface Props { agent: Agent; }
 
-// Timing (ms)
-const WORK_INTERVAL    = 60 * 60 * 1000;  // every 1 hour  → go to desk
-const REST_INTERVAL    = 20 * 60 * 1000;  // every 20 min  → rest on sofa
-const WORK_DURATION    = 5  * 60 * 1000;  // work at desk for 5 min then resume wandering
-const REST_DURATION    = 3  * 60 * 1000;  // rest on sofa for 3 min then resume
+const WORK_INTERVAL = 60 * 60 * 1000;
+const REST_INTERVAL = 20 * 60 * 1000;
+const WORK_DURATION = 5  * 60 * 1000;
+const REST_DURATION = 3  * 60 * 1000;
 
 export function PhaserRoom({ agent }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -25,20 +22,61 @@ export function PhaserRoom({ agent }: Props) {
     import("phaser").then((Phaser) => {
       if (!mounted || !containerRef.current) return;
 
+      // ─── Helper: draw one isometric voxel cube ──────────────────────
+      // cx,cy = top-center of cube | w = half-width | h = face height
+      function drawIso(
+        g: Phaser.GameObjects.Graphics,
+        cx: number, cy: number,
+        w: number, h: number,
+        topC: number, leftC: number, rightC: number
+      ) {
+        const d = w / 2; // vertical extent of diamond = w, half = d
+
+        // Top face (diamond)
+        g.fillStyle(topC, 1);
+        g.beginPath();
+        g.moveTo(cx,     cy);
+        g.lineTo(cx + w, cy + d);
+        g.lineTo(cx,     cy + d * 2);
+        g.lineTo(cx - w, cy + d);
+        g.closePath();
+        g.fillPath();
+
+        // Left face
+        g.fillStyle(leftC, 1);
+        g.beginPath();
+        g.moveTo(cx - w, cy + d);
+        g.lineTo(cx,     cy + d * 2);
+        g.lineTo(cx,     cy + d * 2 + h);
+        g.lineTo(cx - w, cy + d + h);
+        g.closePath();
+        g.fillPath();
+
+        // Right face
+        g.fillStyle(rightC, 1);
+        g.beginPath();
+        g.moveTo(cx,     cy + d * 2);
+        g.lineTo(cx + w, cy + d);
+        g.lineTo(cx + w, cy + d + h);
+        g.lineTo(cx,     cy + d * 2 + h);
+        g.closePath();
+        g.fillPath();
+      }
+
+      // ─── Scene ─────────────────────────────────────────────────────
       class OfficeScene extends Phaser.Scene {
-        private agentContainer!: Phaser.GameObjects.Container;
-        private nameLabel!: Phaser.GameObjects.Text;
-        private statusLabel!: Phaser.GameObjects.Text;
-        private statusDot!: Phaser.GameObjects.Arc;
+        private agentC!: Phaser.GameObjects.Container;
+        private nameDot!: Phaser.GameObjects.Arc;
+        private statusTxt!: Phaser.GameObjects.Text;
+        private statusBg!: Phaser.GameObjects.Graphics;
         private currentStatus: AgentStatus = agent.status;
         private bobTween: Phaser.Tweens.Tween | null = null;
-        private routineLocked = false; // prevents wander from interrupting routine
+        private routineLocked = false;
 
-        // Positions defined after create() when W/H are known
-        private deskPos!:  { x: number; y: number };
-        private sofaPos!:  { x: number; y: number };
-        private centerPos!:{ x: number; y: number };
-        private wanderPts!: { x: number; y: number }[];
+        private deskPos!:   {x:number;y:number};
+        private sofaPos!:   {x:number;y:number};
+        private centerPos!: {x:number;y:number};
+        private wanderPts!: {x:number;y:number}[];
 
         constructor() { super({ key: "OfficeScene" }); }
         preload() {}
@@ -47,211 +85,224 @@ export function PhaserRoom({ agent }: Props) {
           const W = this.scale.width;
           const H = this.scale.height;
 
-          // ── Key positions
-          this.deskPos   = { x: 210,       y: 155 };
-          this.sofaPos   = { x: W - 115,   y: 175 };
-          this.centerPos = { x: W * 0.45,  y: H * 0.5 };
+          // Positions
+          this.deskPos   = { x: W * 0.26, y: H * 0.40 };
+          this.sofaPos   = { x: W * 0.72, y: H * 0.33 };
+          this.centerPos = { x: W * 0.47, y: H * 0.58 };
           this.wanderPts = [
-            { x: W * 0.3,  y: H * 0.45 },
-            { x: W * 0.55, y: H * 0.38 },
-            { x: W * 0.65, y: H * 0.62 },
-            { x: W * 0.4,  y: H * 0.68 },
-            { x: W * 0.25, y: H * 0.55 },
+            { x: W*0.33, y: H*0.52 },
+            { x: W*0.55, y: H*0.42 },
+            { x: W*0.62, y: H*0.62 },
+            { x: W*0.38, y: H*0.68 },
           ];
 
           // ── Background
-          this.add.graphics()
-            .fillStyle(0x1a1f35, 1)
-            .fillRect(0, 0, W, H);
-
+          const bg = this.add.graphics();
+          bg.fillStyle(0x12172a, 1);
+          bg.fillRect(0, 0, W, H);
+          // Grid
           const grid = this.add.graphics();
-          grid.lineStyle(1, 0x2a2f4a, 0.35);
-          for (let x = 0; x < W; x += 48) grid.lineBetween(x, 0, x, H);
-          for (let y = 0; y < H; y += 48) grid.lineBetween(0, y, W, y);
+          grid.lineStyle(1, 0x1c2240, 0.6);
+          for (let x=0; x<W; x+=52) grid.lineBetween(x, 0, x, H);
+          for (let y=0; y<H; y+=52) grid.lineBetween(0, y, W, y);
 
-          // ── Furniture
-          this.drawDesk(70, 70);
-          this.drawMonitor(90, 60);
-          this.drawSofa(W - 190, 70);
+          // ── Desk + chair + monitor
+          this.buildDeskScene(W*0.22, H*0.18);
+          // ── Sofa + table
+          this.buildSofaScene(W*0.65, H*0.14);
 
-          // ── Agent
-          const color = this.avatarColor(agent.avatar_style);
-          this.agentContainer = this.buildAvatar(agent.pos_x, agent.pos_y, color);
-
-          this.nameLabel = this.add
-            .text(agent.pos_x, agent.pos_y - 56, agent.name, {
-              fontSize: "13px", color: "#f0f2f8",
-              fontFamily: "Inter, system-ui, sans-serif", fontStyle: "600",
-            }).setOrigin(0.5).setDepth(10);
-
-          this.statusLabel = this.add
-            .text(agent.pos_x, agent.pos_y - 40, this.statusText(agent.status), {
-              fontSize: "11px", color: this.statusColor(agent.status),
-              fontFamily: "Inter, system-ui, sans-serif",
-            }).setOrigin(0.5).setDepth(10);
-
-          this.statusDot = this.add
-            .circle(agent.pos_x + 18, agent.pos_y - 18, 6, this.statusHex(agent.status))
-            .setDepth(11);
+          // ── Voxel agent
+          this.agentC = this.buildVoxelAgent(agent.pos_x, agent.pos_y);
 
           this.applyStatusEffect(agent.status);
-
-          // ── Automatic daily routine
           this.scheduleRoutine();
 
           sceneRef.current = this;
         }
 
-        // ───────────────────────────────────────────────
-        // Routine scheduler
-        // ───────────────────────────────────────────────
-        private scheduleRoutine() {
-          // Every hour → go work at desk
-          this.time.addEvent({
-            delay: WORK_INTERVAL,
-            loop: true,
-            callback: () => {
-              if (this.currentStatus === "error") return;
-              this.doWorkAtDesk();
-            },
+        // ── Desk, chair, monitor ───────────────────────────────────────
+        private buildDeskScene(ox: number, oy: number) {
+          const g = this.add.graphics();
+
+          // Chair back
+          drawIso(g, ox-14, oy+8,  22, 44, 0x4a6fa5, 0x355090, 0x243878);
+          // Chair seat
+          drawIso(g, ox-14, oy+46, 26, 10, 0x5a80c0, 0x4060a0, 0x2e4882);
+
+          // Desk surface
+          drawIso(g, ox+32, oy+22, 54, 9,  0x9b7040, 0x7a5528, 0x5a3d18);
+          // Desk legs (4)
+          drawIso(g, ox-18, oy+33, 5, 30, 0x5a3d18, 0x3d2810, 0x2a1c08);
+          drawIso(g, ox+78, oy+33, 5, 30, 0x5a3d18, 0x3d2810, 0x2a1c08);
+          drawIso(g, ox-18, oy+60, 5, 5,  0x3d2810, 0x2a1c08, 0x1c1006);
+          drawIso(g, ox+78, oy+60, 5, 5,  0x3d2810, 0x2a1c08, 0x1c1006);
+
+          // Monitor stand + body
+          drawIso(g, ox+56, oy+6,  18, 36, 0x222228, 0x161618, 0x0e0e10);
+          // Screen face (right face = visible screen)
+          g.fillStyle(0x1a3a6a, 1);
+          g.beginPath();
+          g.moveTo(ox+56,   oy+15);
+          g.lineTo(ox+74,   oy+6);
+          g.lineTo(ox+74,   oy+38);
+          g.lineTo(ox+56,   oy+47);
+          g.closePath();
+          g.fillPath();
+          // Screen glow
+          g.fillStyle(0x4f6ef7, 0.18);
+          g.beginPath();
+          g.moveTo(ox+56,   oy+15);
+          g.lineTo(ox+74,   oy+6);
+          g.lineTo(ox+74,   oy+38);
+          g.lineTo(ox+56,   oy+47);
+          g.closePath();
+          g.fillPath();
+          // Code lines on screen
+          const lines = this.add.graphics();
+          lines.lineStyle(1.5, 0x6fa3ef, 0.7);
+          [0,1,2,3].forEach(i => {
+            const x1 = ox+58, x2 = ox+58 + (14 + i*4 % 8);
+            const y1 = oy+18 + i*7;
+            const y2 = y1 - (i*3 % 5);
+            lines.lineBetween(x1, y1, x2, y2);
           });
 
-          // Every 20 min → rest on sofa
-          this.time.addEvent({
-            delay: REST_INTERVAL,
-            loop: true,
-            callback: () => {
-              if (this.currentStatus === "error") return;
-              // Don't interrupt a desk session
-              if (!this.routineLocked) this.doRestOnSofa();
-            },
-          });
+          // Keyboard
+          const kb = this.add.graphics();
+          kb.fillStyle(0x3a4060, 1);
+          kb.beginPath();
+          kb.moveTo(ox+14, oy+32);
+          kb.lineTo(ox+56, oy+18);
+          kb.lineTo(ox+56, oy+25);
+          kb.lineTo(ox+14, oy+39);
+          kb.closePath();
+          kb.fillPath();
         }
 
-        // Walk to desk → type → return
-        private doWorkAtDesk() {
-          this.routineLocked = true;
-          this.setInternalStatus("working");
-          this.walkTo(this.deskPos.x, this.deskPos.y, 1600, () => {
-            this.playTyping();
-            // After WORK_DURATION, return to center and resume
-            this.time.delayedCall(WORK_DURATION, () => {
-              this.stopTyping();
-              this.setInternalStatus("idle");
-              this.walkTo(this.centerPos.x, this.centerPos.y, 1400, () => {
-                this.routineLocked = false;
-                if (this.currentStatus === "idle") this.startWander();
-              });
-            });
-          });
+        // ── Sofa scene ─────────────────────────────────────────────────
+        private buildSofaScene(ox: number, oy: number) {
+          const g = this.add.graphics();
+          // Sofa back
+          drawIso(g, ox, oy,    50, 40, 0x2e3a5c, 0x1e2a4c, 0x121e3a);
+          // Sofa seat
+          drawIso(g, ox, oy+36, 55, 14, 0x3a4878, 0x2a3868, 0x1a2858);
+          // Armrests
+          drawIso(g, ox-44, oy+16, 10, 30, 0x2e3a5c, 0x1e2a4c, 0x121e3a);
+          drawIso(g, ox+44, oy+16, 10, 30, 0x2e3a5c, 0x1e2a4c, 0x121e3a);
+          // Cushions
+          drawIso(g, ox-16, oy+34, 22, 10, 0x444e7a, 0x343e6a, 0x242e5a);
+          drawIso(g, ox+16, oy+34, 22, 10, 0x444e7a, 0x343e6a, 0x242e5a);
+          // Coffee table
+          drawIso(g, ox+2, oy+78, 32, 5, 0x22263c, 0x161a2e, 0x0e1020);
+          drawIso(g, ox-22, oy+84, 4, 14, 0x161a2e, 0x0e1020, 0x080c18);
+          drawIso(g, ox+26, oy+84, 4, 14, 0x161a2e, 0x0e1020, 0x080c18);
         }
 
-        // Walk to sofa → sit → return
-        private doRestOnSofa() {
-          this.routineLocked = true;
-          this.setInternalStatus("idle");
-          this.walkTo(this.sofaPos.x, this.sofaPos.y, 1600, () => {
-            this.playSit();
-            this.time.delayedCall(REST_DURATION, () => {
-              this.stopSit();
-              this.walkTo(this.centerPos.x, this.centerPos.y, 1400, () => {
-                this.routineLocked = false;
-                if (this.currentStatus === "idle") this.startWander();
-              });
-            });
-          });
+        // ── Voxel character ────────────────────────────────────────────
+        private buildVoxelAgent(x: number, y: number): Phaser.GameObjects.Container {
+          const shirtC = this.avatarColor(agent.avatar_style);
+          const shirtT = Phaser.Display.Color.ValueToColor(shirtC).lighten(8).color;
+          const shirtL = Phaser.Display.Color.ValueToColor(shirtC).darken(22).color;
+          const shirtR = Phaser.Display.Color.ValueToColor(shirtC).darken(40).color;
+          const skinC  = 0xc8915a;
+          const skinL  = 0xa87040;
+          const skinR  = 0x8a5a2e;
+          const hairC  = 0x2c1b0e;
+          const hairL  = 0x1e1208;
+          const hairR  = 0x120c04;
+          const pantsC = 0x3d4a6e;
+          const pantsL = 0x2d3a5e;
+          const pantsR = 0x1d2a4e;
+
+          const gfx = this.add.graphics();
+
+          // Hair
+          drawIso(gfx, 0, -62, 16, 7,  hairC, hairL, hairR);
+          // Head
+          drawIso(gfx, 0, -42, 14, 20, skinC, skinL, skinR);
+          // Eyes
+          gfx.fillStyle(0x1a1020, 1);
+          gfx.fillRect(-9, -30, 5, 5);
+          gfx.fillRect(4,  -30, 5, 5);
+          // Mouth
+          gfx.fillStyle(0x9a6030, 0.7);
+          gfx.fillRect(-4, -20, 8, 2);
+          // Body / shirt
+          drawIso(gfx, 0, -14, 16, 24, shirtT, shirtL, shirtR);
+          // Left arm
+          drawIso(gfx, -20, -8,  5, 18, skinC, skinL, skinR);
+          // Right arm
+          drawIso(gfx,  20, -8,  5, 18, skinC, skinL, skinR);
+          // Left leg
+          drawIso(gfx, -9, 28,   7, 16, pantsC, pantsL, pantsR);
+          // Right leg
+          drawIso(gfx,  9, 28,   7, 16, pantsC, pantsL, pantsR);
+
+          // Name badge (dark rectangle with left accent + dot)
+          const nbg = this.add.graphics();
+          const dotC = this.statusHex(agent.status);
+          const bw = agent.name.length * 9 + 40;
+          nbg.fillStyle(0x0f1322, 0.92);
+          nbg.fillRoundedRect(-bw/2, -15, bw, 30, 5);
+          nbg.fillStyle(dotC, 1);
+          nbg.fillRect(-bw/2, -15, 4, 30);
+
+          const nameTxt = this.add.text(
+            -bw/2 + 12, 0,
+            agent.name.toUpperCase(),
+            { fontSize:"12px", color:"#ffffff",
+              fontFamily:"Inter, system-ui, sans-serif", fontStyle:"700" }
+          ).setOrigin(0, 0.5);
+
+          this.nameDot = this.add.circle(bw/2 - 12, 0, 5, dotC);
+
+          const nameBadge = this.add.container(0, -88, [nbg, nameTxt, this.nameDot]);
+
+          // Status badge (dark rounded pill)
+          this.statusBg = this.add.graphics();
+          const stLabel = this.statusText(agent.status);
+          const sw = stLabel.length * 8 + 28;
+          this.statusBg.fillStyle(0x1e2438, 0.92);
+          this.statusBg.fillRoundedRect(-sw/2, -13, sw, 26, 13);
+
+          this.statusTxt = this.add.text(0, 0, stLabel, {
+            fontSize:"12px", color: this.statusColor(agent.status),
+            fontFamily:"Inter, system-ui, sans-serif", fontStyle:"600",
+          }).setOrigin(0.5);
+
+          const statusBadge = this.add.container(0, 62, [this.statusBg, this.statusTxt]);
+
+          const c = this.add.container(x, y, [gfx, nameBadge, statusBadge]);
+          c.setDepth(10);
+          return c;
         }
 
-        // ── Typing animation at desk
-        private typingTween: Phaser.Tweens.Tween | null = null;
-        private playTyping() {
-          this.typingTween = this.tweens.add({
-            targets: this.agentContainer,
-            y: `-=4`, duration: 200,
-            yoyo: true, repeat: -1,
-            ease: "Sine.easeInOut",
-          });
-        }
-        private stopTyping() {
-          this.typingTween?.destroy();
-          this.typingTween = null;
-        }
-
-        // ── Sitting animation on sofa
-        private sitTween: Phaser.Tweens.Tween | null = null;
-        private playSit() {
-          // Scale down slightly to look "seated"
-          this.agentContainer.setScale(1, 0.75);
-          this.sitTween = this.tweens.add({
-            targets: this.agentContainer,
-            scaleY: 0.72, duration: 2000,
-            yoyo: true, repeat: -1,
-            ease: "Sine.easeInOut",
-          });
-        }
-        private stopSit() {
-          this.sitTween?.destroy();
-          this.sitTween = null;
-          this.agentContainer.setScale(1, 1);
+        // ── Refresh status badge text/color ────────────────────────────
+        private refreshBadge(status: AgentStatus) {
+          if (!this.statusTxt) return;
+          const label = this.statusText(status);
+          this.statusTxt.setText(label);
+          this.statusTxt.setColor(this.statusColor(status));
+          if (this.nameDot) this.nameDot.setFillStyle(this.statusHex(status));
+          // Redraw status bg to fit new text width
+          if (this.statusBg) {
+            this.statusBg.clear();
+            const sw = label.length * 8 + 28;
+            this.statusBg.fillStyle(0x1e2438, 0.92);
+            this.statusBg.fillRoundedRect(-sw/2, -13, sw, 26, 13);
+          }
         }
 
-        // ───────────────────────────────────────────────
-        // Walking
-        // ───────────────────────────────────────────────
-        private walkTo(
-          x: number, y: number, duration: number, onDone?: () => void
-        ) {
-          const flip = x < this.agentContainer.x;
-          this.agentContainer.setScale(flip ? -1 : 1, 1);
-
-          this.tweens.add({
-            targets: [
-              this.agentContainer, this.nameLabel,
-              this.statusLabel,    this.statusDot,
-            ],
-            x,
-            duration,
-            ease: "Sine.easeInOut",
-            onUpdate: () => {
-              const bobY = y + Math.sin(Date.now() / 110) * 5;
-              this.agentContainer.y = bobY;
-              this.nameLabel.y      = bobY - 56;
-              this.statusLabel.y    = bobY - 40;
-              this.statusDot.y      = bobY - 18;
-              this.statusDot.x      = this.agentContainer.x + (flip ? -18 : 18);
-            },
-            onComplete: () => { if (onDone) onDone(); },
-          });
-        }
-
-        private startWander() {
-          if (this.routineLocked || this.currentStatus !== "idle") return;
-          const wp = Phaser.Utils.Array.GetRandom(this.wanderPts) as { x: number; y: number };
-          this.walkTo(wp.x, wp.y, 2200, () => {
-            if (!this.routineLocked && this.currentStatus === "idle") {
-              this.time.delayedCall(1500, () => this.startWander());
-            }
-          });
-        }
-
-        // ───────────────────────────────────────────────
-        // Status effects (triggered by webhook)
-        // ───────────────────────────────────────────────
-        private setInternalStatus(s: AgentStatus) {
-          this.statusLabel.setText(this.statusText(s));
-          this.statusLabel.setColor(this.statusColor(s));
-          this.statusDot.setFillStyle(this.statusHex(s));
-        }
-
+        // ── Status effects ─────────────────────────────────────────────
         applyStatusEffect(status: AgentStatus) {
           if (this.bobTween) { this.bobTween.destroy(); this.bobTween = null; }
-          this.agentContainer.setAlpha(1);
-          this.setInternalStatus(status);
+          this.agentC?.setAlpha(1);
+          this.refreshBadge(status);
 
           switch (status) {
             case "idle":
               this.bobTween = this.tweens.add({
-                targets: this.agentContainer, scaleY: 0.96, duration: 1800,
+                targets: this.agentC, y: "-=4", duration: 2000,
                 yoyo: true, repeat: -1, ease: "Sine.easeInOut",
               });
               if (!this.routineLocked) this.startWander();
@@ -260,7 +311,7 @@ export function PhaserRoom({ agent }: Props) {
             case "working":
               if (!this.routineLocked) {
                 this.routineLocked = true;
-                this.walkTo(this.deskPos.x, this.deskPos.y, 1600, () => {
+                this.moveTo(this.deskPos.x, this.deskPos.y, 1600, () => {
                   this.playTyping();
                 });
               }
@@ -269,11 +320,11 @@ export function PhaserRoom({ agent }: Props) {
             case "replying":
               this.stopTyping();
               this.tweens.add({
-                targets: this.agentContainer, y: `-=12`, duration: 200,
-                yoyo: true, repeat: 3, ease: "Sine.easeOut",
+                targets: this.agentC, y: "-=12", duration: 160,
+                yoyo: true, repeat: 3, ease: "Bounce.easeOut",
               });
               this.bobTween = this.tweens.add({
-                targets: this.statusDot, alpha: 0.2, duration: 350,
+                targets: this.nameDot, alpha: 0.2, duration: 300,
                 yoyo: true, repeat: -1,
               });
               break;
@@ -281,11 +332,11 @@ export function PhaserRoom({ agent }: Props) {
             case "error":
               this.stopTyping(); this.routineLocked = false;
               this.tweens.add({
-                targets: [this.agentContainer, this.nameLabel, this.statusLabel],
-                x: `+=8`, duration: 70, yoyo: true, repeat: 6, ease: "Linear",
+                targets: this.agentC, x: "+=8", duration: 65,
+                yoyo: true, repeat: 7, ease: "Linear",
               });
               this.bobTween = this.tweens.add({
-                targets: this.agentContainer, alpha: 0.4, duration: 500,
+                targets: this.agentC, alpha: 0.45, duration: 450,
                 yoyo: true, repeat: -1,
               });
               break;
@@ -294,112 +345,115 @@ export function PhaserRoom({ agent }: Props) {
 
         updateStatus(status: AgentStatus) {
           if (status === this.currentStatus) return;
-          // Webhook events override the routine
-          if (status === "working" || status === "replying" || status === "error") {
+          if (["working","replying","error"].includes(status)) {
             this.routineLocked = false;
           }
           this.currentStatus = status;
           this.applyStatusEffect(status);
         }
 
-        // ───────────────────────────────────────────────
-        // Drawing helpers
-        // ───────────────────────────────────────────────
-        private buildAvatar(x: number, y: number, color: number) {
-          const c = this.add.container(x, y).setDepth(5);
-          c.add(this.add.ellipse(0, 24, 38, 12, 0x000000, 0.25));
-          const body = this.add.graphics();
-          body.fillStyle(color, 1);
-          body.fillRoundedRect(-15, -6, 30, 30, 6);
-          c.add(body);
-          const legs = this.add.graphics();
-          legs.fillStyle(
-            Phaser.Display.Color.ValueToColor(color).darken(20).color, 1
-          );
-          legs.fillRect(-9, 22, 8, 10);
-          legs.fillRect(3, 22, 8, 10);
-          c.add(legs);
-          c.add(this.add.circle(0, -22, 16, color));
-          const face = this.add.graphics();
-          face.fillStyle(0xffffff, 0.95);
-          face.fillCircle(-5, -24, 3.5); face.fillCircle(5, -24, 3.5);
-          face.fillStyle(0x1a1f35, 1);
-          face.fillCircle(-4.5, -24, 1.8); face.fillCircle(5.5, -24, 1.8);
-          face.lineStyle(1.5, 0x1a1f35, 0.5);
-          face.strokeEllipse(0, -16, 10, 5);
-          c.add(face);
-          return c;
-        }
-
-        private drawDesk(x: number, y: number) {
-          const g = this.add.graphics();
-          g.fillStyle(0x2d3550, 1).fillRoundedRect(x, y, 165, 82, 8);
-          g.fillStyle(0x1a2038, 1);
-          g.fillRect(x + 10, y + 80, 14, 18);
-          g.fillRect(x + 141, y + 80, 14, 18);
-          g.fillStyle(0x252b42, 1).fillRoundedRect(x + 14, y + 42, 106, 32, 4);
-          g.fillStyle(0x3a4060, 1).fillRoundedRect(x + 18, y + 52, 82, 16, 3);
-          g.fillEllipse(x + 118, y + 58, 16, 20);
-        }
-
-        private drawMonitor(x: number, y: number) {
-          const g = this.add.graphics();
-          g.fillStyle(0x181d32, 1).fillRoundedRect(x + 28, y, 106, 66, 6);
-          g.fillStyle(0x1a3a6a, 1).fillRoundedRect(x + 34, y + 6, 94, 52, 4);
-          const glow = this.add.graphics();
-          glow.fillStyle(0x4f6ef7, 0.07).fillRoundedRect(x + 34, y + 6, 94, 52, 4);
-          const lines = this.add.graphics();
-          lines.lineStyle(1.5, 0x4f6ef7, 0.55);
-          [0,1,2,3].forEach(i => {
-            const w = 28 + (i % 3) * 14;
-            lines.lineBetween(x+40, y+16+i*11, x+40+w, y+16+i*11);
+        // ── Movement ───────────────────────────────────────────────────
+        private moveTo(tx: number, ty: number, dur: number, onDone?: () => void) {
+          this.tweens.add({
+            targets: this.agentC, x: tx, y: ty, duration: dur,
+            ease: "Sine.easeInOut",
+            onUpdate: () => {
+              // Walking bob
+              this.agentC.y += Math.sin(Date.now() / 100) * 0.5;
+            },
+            onComplete: () => { if (onDone) onDone(); },
           });
-          g.fillStyle(0x181d32, 1);
-          g.fillRect(x + 76, y + 66, 10, 12);
-          g.fillRoundedRect(x + 58, y + 78, 46, 6, 3);
         }
 
-        private drawSofa(x: number, y: number) {
-          const g = this.add.graphics();
-          g.fillStyle(0x333a5a, 1).fillRoundedRect(x, y, 145, 28, 8);
-          g.fillStyle(0x2a3050, 1).fillRoundedRect(x, y + 22, 145, 52, 10);
-          g.fillStyle(0x3a4268, 1);
-          g.fillRoundedRect(x - 8, y + 22, 18, 44, 5);
-          g.fillRoundedRect(x + 135, y + 22, 18, 44, 5);
-          g.fillStyle(0x2f3858, 1);
-          g.fillRoundedRect(x + 10, y + 28, 52, 36, 6);
-          g.fillRoundedRect(x + 74, y + 28, 52, 36, 6);
-          g.fillStyle(0x20253c, 1).fillRoundedRect(x + 18, y + 88, 108, 8, 4);
-          g.fillRect(x + 28, y + 96, 6, 14);
-          g.fillRect(x + 108, y + 96, 6, 14);
+        private startWander() {
+          if (this.routineLocked || this.currentStatus !== "idle") return;
+          const wp = Phaser.Utils.Array.GetRandom(this.wanderPts) as {x:number;y:number};
+          this.moveTo(wp.x, wp.y, 2000, () => {
+            if (!this.routineLocked && this.currentStatus === "idle") {
+              this.time.delayedCall(1400, () => this.startWander());
+            }
+          });
         }
 
+        private typingTween: Phaser.Tweens.Tween | null = null;
+        private playTyping() {
+          this.typingTween = this.tweens.add({
+            targets: this.agentC, y: "-=3", duration: 200,
+            yoyo: true, repeat: -1, ease: "Sine.easeInOut",
+          });
+        }
+        private stopTyping() {
+          this.typingTween?.destroy();
+          this.typingTween = null;
+        }
+
+        // ── Routine scheduler ──────────────────────────────────────────
+        private scheduleRoutine() {
+          this.time.addEvent({ delay: WORK_INTERVAL, loop: true, callback: () => {
+            if (this.currentStatus !== "error") this.doWorkAtDesk();
+          }});
+          this.time.addEvent({ delay: REST_INTERVAL, loop: true, callback: () => {
+            if (this.currentStatus !== "error" && !this.routineLocked)
+              this.doRestOnSofa();
+          }});
+        }
+
+        private doWorkAtDesk() {
+          this.routineLocked = true;
+          this.currentStatus = "working";
+          this.refreshBadge("working");
+          this.moveTo(this.deskPos.x, this.deskPos.y, 1600, () => {
+            this.playTyping();
+            this.time.delayedCall(WORK_DURATION, () => {
+              this.stopTyping();
+              this.currentStatus = "idle";
+              this.refreshBadge("idle");
+              this.moveTo(this.centerPos.x, this.centerPos.y, 1400, () => {
+                this.routineLocked = false;
+                this.startWander();
+              });
+            });
+          });
+        }
+
+        private doRestOnSofa() {
+          this.routineLocked = true;
+          this.moveTo(this.sofaPos.x, this.sofaPos.y, 1600, () => {
+            this.agentC.setScale(1, 0.78);
+            this.time.delayedCall(REST_DURATION, () => {
+              this.agentC.setScale(1, 1);
+              this.moveTo(this.centerPos.x, this.centerPos.y, 1400, () => {
+                this.routineLocked = false;
+                this.startWander();
+              });
+            });
+          });
+        }
+
+        // ── Helpers ────────────────────────────────────────────────────
         private statusText(s: AgentStatus): string {
-          return { idle:"● Idle", working:"⚡ Working", replying:"💬 Replying", error:"⚠ Error" }[s];
+          return { idle:"Idle", working:"Working", replying:"Replying", error:"Error" }[s];
         }
         private statusColor(s: AgentStatus): string {
-          return { idle:"#9ca3af", working:"#fbbf24", replying:"#4f6ef7", error:"#f87171" }[s];
+          return { idle:"#9ca3af", working:"#fbbf24", replying:"#818cf8", error:"#f87171" }[s];
         }
         private statusHex(s: AgentStatus): number {
-          return { idle:0x9ca3af, working:0xfbbf24, replying:0x4f6ef7, error:0xf87171 }[s];
+          return { idle:0x9ca3af, working:0x22c55e, replying:0x818cf8, error:0xf87171 }[s];
         }
         private avatarColor(style: string): number {
           return ({
             blue:0x3b82f6, purple:0xa855f7, green:0x10b981,
             amber:0xf59e0b, pink:0xec4899, cyan:0x06b6d4,
             red:0xef4444, indigo:0x6366f1,
-          } as Record<string,number>)[style] ?? 0x4f6ef7;
+          } as Record<string,number>)[style] ?? 0x26a996;
         }
       }
 
       gameRef.current = new Phaser.Game({
         type: Phaser.AUTO,
         parent: containerRef.current!,
-        backgroundColor: "#0d0f1e",
-        scale: {
-          mode: Phaser.Scale.RESIZE,
-          autoCenter: Phaser.Scale.CENTER_BOTH,
-        },
+        backgroundColor: "#12172a",
+        scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
         scene: [OfficeScene],
         banner: false,
       });
