@@ -106,49 +106,46 @@ export function PhaserRoom({ agent }: Props) {
           const walls = this.add.graphics();
 
           // Left wall panel
-          walls.fillStyle(0x1a2035, 1);
+          walls.fillStyle(0x252d48, 1);
           walls.beginPath();
-          walls.moveTo(0,       H * 0.08);   // top-left corner
-          walls.lineTo(W * 0.5, H * 0.0);    // vanishing apex (top center)
-          walls.lineTo(W * 0.5, H * 0.28);   // floor line center
-          walls.lineTo(0,       H * 0.38);   // floor line left
+          walls.moveTo(0,       H * 0.08);
+          walls.lineTo(W * 0.5, H * 0.0);
+          walls.lineTo(W * 0.5, H * 0.28);
+          walls.lineTo(0,       H * 0.38);
           walls.closePath();
           walls.fillPath();
 
-          // Right wall panel
-          walls.fillStyle(0x141929, 1);
+          // Right wall panel (slightly darker)
+          walls.fillStyle(0x1c2338, 1);
           walls.beginPath();
-          walls.moveTo(W,       H * 0.08);   // top-right corner
-          walls.lineTo(W * 0.5, H * 0.0);    // vanishing apex (top center)
-          walls.lineTo(W * 0.5, H * 0.28);   // floor line center
-          walls.lineTo(W,       H * 0.38);   // floor line right
+          walls.moveTo(W,       H * 0.08);
+          walls.lineTo(W * 0.5, H * 0.0);
+          walls.lineTo(W * 0.5, H * 0.28);
+          walls.lineTo(W,       H * 0.38);
           walls.closePath();
           walls.fillPath();
 
-          // Wall edge / ridge line at the apex
-          walls.lineStyle(1.5, 0x2a3550, 0.8);
+          // Wall edge ridge line
+          walls.lineStyle(2, 0x4a5880, 1);
           walls.lineBetween(W * 0.5, H * 0.0, W * 0.5, H * 0.28);
 
-          // Subtle wall baseboard lines
-          walls.lineStyle(1, 0x222a42, 0.5);
+          // Baseboard lines
+          walls.lineStyle(1.5, 0x3a4460, 0.9);
           walls.lineBetween(0, H * 0.38, W * 0.5, H * 0.28);
           walls.lineBetween(W, H * 0.38, W * 0.5, H * 0.28);
 
-          // Wall accent lines (horizontal stripes for depth)
-          walls.lineStyle(1, 0x1f2840, 0.35);
-          for (let i = 1; i <= 3; i++) {
-            const fy = H * 0.08 + (H * 0.30 - H * 0.08) * (i / 4);
-            const leftX = 0 + (W * 0.5 - 0) * (i / 4);
-            const rightX = W - (W - W * 0.5) * (i / 4);
-            walls.lineBetween(0, H * 0.08 + (H * 0.30) * (i / 4), leftX, fy);
-            walls.lineBetween(W, H * 0.08 + (H * 0.30) * (i / 4), rightX, fy);
+          // Horizontal depth stripes on walls
+          walls.lineStyle(1, 0x2e3855, 0.5);
+          for (let i = 1; i <= 4; i++) {
+            const t = i / 5;
+            walls.lineBetween(0,   H*0.08 + (H*0.30)*t, W*0.5*t,   H*0.08 + (H*0.30)*t * 0.5 + H*0.28*t*0.5);
+            walls.lineBetween(W,   H*0.08 + (H*0.30)*t, W-W*0.5*t, H*0.08 + (H*0.30)*t * 0.5 + H*0.28*t*0.5);
           }
 
           // ── Isometric floor tiles ────────────────────────────────────
-          // Tile colors: alternating dark tones for a checkerboard iso grid
-          const TILE_COLOR_A = 0x161d30;
-          const TILE_COLOR_B = 0x1c2540;
-          const TILE_LINE    = 0x222c48;
+          const TILE_COLOR_A = 0x1e2845;  // visible navy blue tile
+          const TILE_COLOR_B = 0x263358;  // slightly lighter contrasting tile
+          const TILE_LINE    = 0x3a4d78;  // clear tile border
 
           // Tile dimensions in iso space
           // tW = full tile width, tH = half of tW (iso ratio)
