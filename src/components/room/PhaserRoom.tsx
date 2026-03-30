@@ -344,7 +344,8 @@ export function PhaserRoom({ agent }: Props) {
         }
 
         updateStatus(status: AgentStatus) {
-          if (status === this.currentStatus) return;
+          // Always react to working/replying/error even if same status
+          if (status === this.currentStatus && !["working","replying","error"].includes(status)) return;
           if (["working","replying","error"].includes(status)) {
             this.routineLocked = false;
           }
