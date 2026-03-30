@@ -96,15 +96,115 @@ export function PhaserRoom({ agent }: Props) {
             { x: W*0.38, y: H*0.68 },
           ];
 
-          // ── Background
+          // ── Background: solid dark base
           const bg = this.add.graphics();
-          bg.fillStyle(0x12172a, 1);
+          bg.fillStyle(0x0d1120, 1);
           bg.fillRect(0, 0, W, H);
-          // Grid
-          const grid = this.add.graphics();
-          grid.lineStyle(1, 0x1c2240, 0.6);
-          for (let x=0; x<W; x+=52) grid.lineBetween(x, 0, x, H);
-          for (let y=0; y<H; y+=52) grid.lineBetween(0, y, W, y);
+
+          // ── Back walls (isometric perspective) ──────────────────────
+          // Left back wall (goes from top-left corner down to floor line)
+          const walls = this.add.graphics();
+
+          // Left wall panel
+          walls.fillStyle(0x1a2035, 1);
+          walls.beginPath();
+          walls.moveTo(0,       H * 0.08);   // top-left corner
+          walls.lineTo(W * 0.5, H * 0.0);    // vanishing apex (top center)
+          walls.lineTo(W * 0.5, H * 0.28);   // floor line center
+          walls.lineTo(0,       H * 0.38);   // floor line left
+          walls.closePath();
+          walls.fillPath();
+
+          // Right wall panel
+          walls.fillStyle(0x141929, 1);
+          walls.beginPath();
+          walls.moveTo(W,       H * 0.08);   // top-right corner
+          walls.lineTo(W * 0.5, H * 0.0);    // vanishing apex (top center)
+          walls.lineTo(W * 0.5, H * 0.28);   // floor line center
+          walls.lineTo(W,       H * 0.38);   // floor line right
+          walls.closePath();
+          walls.fillPath();
+
+          // Wall edge / ridge line at the apex
+          walls.lineStyle(1.5, 0x2a3550, 0.8);
+          walls.lineBetween(W * 0.5, H * 0.0, W * 0.5, H * 0.28);
+
+          // Subtle wall baseboard lines
+          walls.lineStyle(1, 0x222a42, 0.5);
+          walls.lineBetween(0, H * 0.38, W * 0.5, H * 0.28);
+          walls.lineBetween(W, H * 0.38, W * 0.5, H * 0.28);
+
+          // Wall accent lines (horizontal stripes for depth)
+          walls.lineStyle(1, 0x1f2840, 0.35);
+          for (let i = 1; i <= 3; i++) {
+            const fy = H * 0.08 + (H * 0.30 - H * 0.08) * (i / 4);
+            const leftX = 0 + (W * 0.5 - 0) * (i / 4);
+            const rightX = W - (W - W * 0.5) * (i / 4);
+            walls.lineBetween(0, H * 0.08 + (H * 0.30) * (i / 4), leftX, fy);
+            walls.lineBetween(W, H * 0.08 + (H * 0.30) * (i / 4), rightX, fy);
+          }
+
+          // ── Isometric floor tiles ────────────────────────────────────
+          // Tile colors: alternating dark tones for a checkerboard iso grid
+          const TILE_COLOR_A = 0x161d30;
+          const TILE_COLOR_B = 0x1c2540;
+          const TILE_LINE    = 0x222c48;
+
+          // Tile dimensions in iso space
+          // tW = full tile width, tH = half of tW (iso ratio)
+          const tW = 64;
+          const tH = tW / 2; // 32
+
+          // Floor region: from y ~ H*0.28 (back) to H (front)
+          // We'll draw a grid of iso diamonds covering the floor area
+          // The floor "vanishing point" is at (W/2, H*0.28)
+          // We use a simple parallelogram grid approach:
+          // Each tile col/row offset in screen space
+          const floorG = this.add.graphics();
+
+          // Number of tiles across and down
+          const COLS = Math.ceil(W / tW) + 4;
+          const ROWS = Math.ceil((H - H * 0.18) / tH) + 4;
+
+          // Origin of the iso grid (where col=0,row=0 tile top vertex sits)
+          const gridOriginX = W / 2;
+          const gridOriginY = H * 0.28;
+
+          for (let row = -1; row < ROWS; row++) {
+            for (let col = -Math.floor(COLS / 2) - 1; col < Math.ceil(COLS / 2) + 1; col++) {
+              // Top vertex of this diamond tile
+              const tx = gridOriginX + col * tW - row * tW;
+              const ty = gridOriginY + col * tH + row * tH;
+
+              // Skip tiles that are fully above the wall line or off-canvas
+              if (ty + tH * 2 < H * 0.22) continue;
+              if (ty > H + tH * 2)        continue;
+              if (tx - tW < -tW * 2)      continue;
+              if (tx + tW > W + tW * 2)   continue;
+
+              // Checkerboard: alternate by (col + row) parity
+              const fillC = (col + row + 400) % 2 === 0 ? TILE_COLOR_A : TILE_COLOR_B;
+
+              floorG.fillStyle(fillC, 1);
+              floorG.beginPath();
+              floorG.moveTo(tx,        ty);
+              floorG.lineTo(tx + tW,   ty + tH);
+              floorG.lineTo(tx,        ty + tH * 2);
+              floorG.lineTo(tx - tW,   ty + tH);
+              floorG.closePath();
+              floorG.fillPath();
+
+              // Tile border
+              floorG.lineStyle(0.7, TILE_LINE, 0.55);
+              floorG.beginPath();
+              floorG.moveTo(tx,        ty);
+              floorG.lineTo(tx + tW,   ty + tH);
+              floorG.lineTo(tx,        ty + tH * 2);
+              floorG.lineTo(tx - tW,   ty + tH);
+              floorG.closePath();
+              floorG.strokePath();
+            }
+          }
 
           // ── Desk + chair + monitor
           this.buildDeskScene(W*0.22, H*0.18);
@@ -196,6 +296,35 @@ export function PhaserRoom({ agent }: Props) {
           drawIso(g, ox+2, oy+78, 32, 5, 0x22263c, 0x161a2e, 0x0e1020);
           drawIso(g, ox-22, oy+84, 4, 14, 0x161a2e, 0x0e1020, 0x080c18);
           drawIso(g, ox+26, oy+84, 4, 14, 0x161a2e, 0x0e1020, 0x080c18);
+
+          // ── Plant decoration (near sofa corner) ──────────────────────
+          // Pot
+          drawIso(g, ox - 62, oy + 58, 9, 12, 0x7a3a1e, 0x5a2a10, 0x3e1c08);
+          // Dirt top
+          drawIso(g, ox - 62, oy + 55, 8, 3, 0x3d2510, 0x2a180a, 0x1c1006);
+          // Main stem / trunk
+          drawIso(g, ox - 62, oy + 40, 4, 16, 0x2d5a1e, 0x1e3e12, 0x122808);
+          // Lower leaf cluster
+          drawIso(g, ox - 62, oy + 30, 14, 10, 0x2a7a28, 0x1a5a1a, 0x0e3e10);
+          // Upper leaf cluster (brighter, smaller)
+          drawIso(g, ox - 62, oy + 16, 10, 8, 0x38a030, 0x267a22, 0x185214);
+          // Top leaf tuft
+          drawIso(g, ox - 62, oy + 6,  6, 6, 0x48b83c, 0x309028, 0x1e6018);
+
+          // ── Floor lamp (near sofa, other side) ───────────────────────
+          // Base plate
+          drawIso(g, ox + 72, oy + 58, 10, 4, 0x1e1e22, 0x141416, 0x0c0c0e);
+          // Pole segment 1
+          drawIso(g, ox + 72, oy + 46, 3, 14, 0x2a2a32, 0x1c1c22, 0x121216);
+          // Pole segment 2
+          drawIso(g, ox + 72, oy + 34, 3, 12, 0x2a2a32, 0x1c1c22, 0x121216);
+          // Pole segment 3
+          drawIso(g, ox + 72, oy + 22, 3, 12, 0x2a2a32, 0x1c1c22, 0x121216);
+          // Lamp shade (wider, bright)
+          drawIso(g, ox + 72, oy + 8,  14, 10, 0xf0d080, 0xc8a840, 0xa07820);
+          // Lamp glow halo (soft ellipse)
+          g.fillStyle(0xffe080, 0.10);
+          g.fillEllipse(ox + 72 + 14, oy + 18, 44, 22);
         }
 
         // ── Voxel character ────────────────────────────────────────────
@@ -216,23 +345,27 @@ export function PhaserRoom({ agent }: Props) {
 
           const gfx = this.add.graphics();
 
-          // Hair
-          drawIso(gfx, 0, -62, 16, 7,  hairC, hairL, hairR);
-          // Head
-          drawIso(gfx, 0, -42, 14, 20, skinC, skinL, skinR);
+          // Shadow ellipse under feet
+          gfx.fillStyle(0x000000, 0.30);
+          gfx.fillEllipse(0, 46, 32, 10);
+
+          // Hair (slightly wider to cap the bigger head)
+          drawIso(gfx, 0, -66, 20, 8,  hairC, hairL, hairR);
+          // Head — bigger: w=18 instead of 14
+          drawIso(gfx, 0, -44, 18, 22, skinC, skinL, skinR);
           // Eyes
           gfx.fillStyle(0x1a1020, 1);
-          gfx.fillRect(-9, -30, 5, 5);
-          gfx.fillRect(4,  -30, 5, 5);
+          gfx.fillRect(-10, -31, 5, 5);
+          gfx.fillRect( 5,  -31, 5, 5);
           // Mouth
           gfx.fillStyle(0x9a6030, 0.7);
           gfx.fillRect(-4, -20, 8, 2);
           // Body / shirt
           drawIso(gfx, 0, -14, 16, 24, shirtT, shirtL, shirtR);
-          // Left arm
-          drawIso(gfx, -20, -8,  5, 18, skinC, skinL, skinR);
-          // Right arm
-          drawIso(gfx,  20, -8,  5, 18, skinC, skinL, skinR);
+          // Left arm — more prominent: wider (w=7) and longer (h=22)
+          drawIso(gfx, -23, -10, 7, 22, skinC, skinL, skinR);
+          // Right arm — more prominent: wider (w=7) and longer (h=22)
+          drawIso(gfx,  23, -10, 7, 22, skinC, skinL, skinR);
           // Left leg
           drawIso(gfx, -9, 28,   7, 16, pantsC, pantsL, pantsR);
           // Right leg
@@ -453,7 +586,7 @@ export function PhaserRoom({ agent }: Props) {
       gameRef.current = new Phaser.Game({
         type: Phaser.AUTO,
         parent: containerRef.current!,
-        backgroundColor: "#12172a",
+        backgroundColor: "#0d1120",
         scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
         scene: [OfficeScene],
         banner: false,
