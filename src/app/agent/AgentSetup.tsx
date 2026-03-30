@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Bot, Monitor, ArrowRight, Key, Webhook, Code2 } from "lucide-react";
+import { Bot, Monitor, ArrowRight, Key } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { AvatarCircle } from "@/components/ui/AvatarCircle";
@@ -26,6 +26,37 @@ const AVATAR_COLORS = [
   { id: "pink", label: "Pink", cls: "bg-pink-500" },
   { id: "cyan", label: "Cyan", cls: "bg-cyan-500" },
 ];
+
+function buildNotifyScript(agentId: string, token: string, webhookUrl: string): string {
+  return `#!/bin/bash
+EVENT=\${1:-thinking_started}
+curl -s -X POST ${webhookUrl} \\
+  -H "Authorization: Bearer ${token}" \\
+  -H "Content-Type: application/json" \\
+  -d "{\\"agentId\\":\\"${agentId}\\",\\"event\\":\\"$EVENT\\"}"
+
+# Auto-reset to idle 10 seconds after reply
+if [ "$EVENT" = "reply_sent" ]; then
+  sleep 10
+  curl -s -X POST ${webhookUrl} \\
+    -H "Authorization: Bearer ${token}" \\
+    -H "Content-Type: application/json" \\
+    -d '{"agentId":"${agentId}","event":"task_completed"}'
+fi`;
+}
+
+function buildAgentsMd(): string {
+  return `## RULE #1 - Live Office Notifications (MANDATORY)
+
+BEFORE processing any message:
+bash /path/to/notify.sh thinking_started
+
+AFTER sending your reply:
+bash /path/to/notify.sh reply_sent
+
+- Run silently, don't mention it to the user
+- No exceptions`;
+}
 
 function buildExamplePayload(agentId: string): string {
   return JSON.stringify(
@@ -215,85 +246,87 @@ export function AgentSetup({ workspace, agent: initialAgent, token: initialToken
         </form>
       </div>
 
-      {/* Webhook credentials — only show after agent created */}
+      {/* Connect guide — only show after agent created */}
       {agent && token && (
         <div className="space-y-4">
-          {/* Webhook URL */}
-          <div className="card p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <Webhook className="w-4 h-4 text-brand-500" />
-              <h3 className="text-sm font-semibold">Webhook URL</h3>
-            </div>
-            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-surface-800 border border-surface-200/10">
-              <code className="text-xs text-emerald-400 flex-1 font-mono truncate">
-                POST {webhookUrl}
-              </code>
-              <CopyButton text={webhookUrl} />
-            </div>
+
+          {/* Step-by-step header */}
+          <div className="flex items-center gap-2 pt-2">
+            <div className="h-px flex-1 bg-surface-200/10" />
+            <span className="text-xs text-surface-200/30 font-medium px-2">Connect your bot</span>
+            <div className="h-px flex-1 bg-surface-200/10" />
           </div>
 
-          {/* Token */}
+          {/* Step 1 — notify.sh */}
+          <div className="card p-5">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="w-5 h-5 rounded-full bg-brand-500/20 text-brand-500 text-xs font-bold flex items-center justify-center">1</span>
+              <h3 className="text-sm font-semibold">Save this script on your server</h3>
+              <CopyButton text={buildNotifyScript(agent.id, token.token, webhookUrl)} className="ml-auto" />
+            </div>
+            <p className="text-xs text-surface-200/30 mb-3 ml-7">Save as <code className="text-surface-200/50">notify.sh</code> and run <code className="text-surface-200/50">chmod +x notify.sh</code></p>
+            <pre className="text-xs text-emerald-400 font-mono bg-surface-800 rounded-lg p-4 overflow-x-auto leading-relaxed whitespace-pre">
+              {buildNotifyScript(agent.id, token.token, webhookUrl)}
+            </pre>
+          </div>
+
+          {/* Step 2 — AGENTS.md */}
+          <div className="card p-5">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="w-5 h-5 rounded-full bg-brand-500/20 text-brand-500 text-xs font-bold flex items-center justify-center">2</span>
+              <h3 className="text-sm font-semibold">Add this rule to your AGENTS.md</h3>
+              <CopyButton text={buildAgentsMd()} className="ml-auto" />
+            </div>
+            <p className="text-xs text-surface-200/30 mb-3 ml-7">Replace <code className="text-surface-200/50">/path/to/notify.sh</code> with the actual path where you saved the script</p>
+            <pre className="text-xs text-amber-400 font-mono bg-surface-800 rounded-lg p-4 overflow-x-auto leading-relaxed whitespace-pre">
+              {buildAgentsMd()}
+            </pre>
+          </div>
+
+          {/* Step 3 — Done */}
           <div className="card p-5">
             <div className="flex items-center gap-2 mb-3">
-              <Key className="w-4 h-4 text-amber-400" />
-              <h3 className="text-sm font-semibold">Bearer token</h3>
-              <span className="text-xs text-surface-200/30 ml-auto">
-                Add as Authorization header
-              </span>
+              <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold flex items-center justify-center">3</span>
+              <h3 className="text-sm font-semibold">Open the live room and chat with your bot</h3>
             </div>
-            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-surface-800 border border-surface-200/10">
-              <code className="text-xs text-amber-400 flex-1 font-mono truncate">
-                Bearer {token.token}
-              </code>
-              <CopyButton text={`Bearer ${token.token}`} />
-            </div>
-            <p className="text-xs text-surface-200/30 mt-2">
-              Keep this secret. It authenticates events to your workspace.
+            <p className="text-xs text-surface-200/40 ml-7">
+              When anyone messages your bot:<br/>
+              <span className="text-surface-200/60">Message → <span className="text-amber-400">Thinking</span> → <span className="text-blue-400">Replying</span> → <span className="text-emerald-400">Idle</span></span>
             </p>
           </div>
 
-          {/* Agent ID */}
-          <div className="card p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <Bot className="w-4 h-4 text-surface-200/50" />
-              <h3 className="text-sm font-semibold">Agent ID</h3>
+          {/* Credentials (collapsed, for advanced users) */}
+          <details className="card p-5 group">
+            <summary className="flex items-center gap-2 cursor-pointer list-none">
+              <Key className="w-4 h-4 text-surface-200/30" />
+              <span className="text-xs text-surface-200/40 font-medium">Advanced — raw credentials</span>
+              <span className="ml-auto text-surface-200/20 text-xs group-open:hidden">Show</span>
+              <span className="ml-auto text-surface-200/20 text-xs hidden group-open:block">Hide</span>
+            </summary>
+            <div className="mt-4 space-y-3">
+              <div>
+                <p className="text-xs text-surface-200/30 mb-1.5">Webhook URL</p>
+                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-surface-800 border border-surface-200/10">
+                  <code className="text-xs text-emerald-400 flex-1 font-mono truncate">POST {webhookUrl}</code>
+                  <CopyButton text={webhookUrl} />
+                </div>
+              </div>
+              <div>
+                <p className="text-xs text-surface-200/30 mb-1.5">Bearer token</p>
+                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-surface-800 border border-surface-200/10">
+                  <code className="text-xs text-amber-400 flex-1 font-mono truncate">{token.token}</code>
+                  <CopyButton text={token.token} />
+                </div>
+              </div>
+              <div>
+                <p className="text-xs text-surface-200/30 mb-1.5">Agent ID</p>
+                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-surface-800 border border-surface-200/10">
+                  <code className="text-xs text-surface-200/60 flex-1 font-mono">{agent.id}</code>
+                  <CopyButton text={agent.id} />
+                </div>
+              </div>
             </div>
-            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-surface-800 border border-surface-200/10">
-              <code className="text-xs text-surface-200/60 flex-1 font-mono">
-                {agent.id}
-              </code>
-              <CopyButton text={agent.id} />
-            </div>
-          </div>
-
-          {/* Example payload */}
-          <div className="card p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <Code2 className="w-4 h-4 text-surface-200/50" />
-              <h3 className="text-sm font-semibold">Example event payload</h3>
-              <CopyButton
-                text={buildExamplePayload(agent.id)}
-                className="ml-auto"
-              />
-            </div>
-            <pre className="text-xs text-emerald-400 font-mono bg-surface-800 rounded-lg p-4 overflow-x-auto leading-relaxed">
-              {buildExamplePayload(agent.id)}
-            </pre>
-          </div>
-
-          {/* cURL example */}
-          <div className="card p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <Code2 className="w-4 h-4 text-surface-200/50" />
-              <h3 className="text-sm font-semibold">cURL example</h3>
-            </div>
-            <pre className="text-xs text-sky-400 font-mono bg-surface-800 rounded-lg p-4 overflow-x-auto leading-relaxed whitespace-pre-wrap break-all">
-{`curl -X POST ${webhookUrl} \\
-  -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer ${token.token}" \\
-  -d '${JSON.stringify({ agentId: agent.id, event: "status_changed", status: "working", message: "Task started" })}'`}
-            </pre>
-          </div>
+          </details>
 
           {/* Go to live room */}
           <Link href="/room" className="btn-primary w-full justify-center">
