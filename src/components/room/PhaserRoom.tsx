@@ -23,16 +23,14 @@ export function PhaserRoom({ agent }: Props) {
       if (!mounted || !containerRef.current) return;
 
       // ─── Helper: draw one isometric voxel cube ──────────────────────
-      // cx,cy = top-center of cube | w = half-width | h = face height
       function drawIso(
         g: Phaser.GameObjects.Graphics,
         cx: number, cy: number,
         w: number, h: number,
         topC: number, leftC: number, rightC: number
       ) {
-        const d = w / 2; // vertical extent of diamond = w, half = d
+        const d = w / 2;
 
-        // Top face (diamond)
         g.fillStyle(topC, 1);
         g.beginPath();
         g.moveTo(cx,     cy);
@@ -42,7 +40,6 @@ export function PhaserRoom({ agent }: Props) {
         g.closePath();
         g.fillPath();
 
-        // Left face
         g.fillStyle(leftC, 1);
         g.beginPath();
         g.moveTo(cx - w, cy + d);
@@ -52,7 +49,6 @@ export function PhaserRoom({ agent }: Props) {
         g.closePath();
         g.fillPath();
 
-        // Right face
         g.fillStyle(rightC, 1);
         g.beginPath();
         g.moveTo(cx,     cy + d * 2);
@@ -63,7 +59,6 @@ export function PhaserRoom({ agent }: Props) {
         g.fillPath();
       }
 
-      // ─── Scene ─────────────────────────────────────────────────────
       class OfficeScene extends Phaser.Scene {
         private agentC!: Phaser.GameObjects.Container;
         private nameDot!: Phaser.GameObjects.Arc;
@@ -85,7 +80,6 @@ export function PhaserRoom({ agent }: Props) {
           const W = this.scale.width;
           const H = this.scale.height;
 
-          // Positions
           this.deskPos   = { x: W * 0.26, y: H * 0.40 };
           this.sofaPos   = { x: W * 0.72, y: H * 0.33 };
           this.centerPos = { x: W * 0.47, y: H * 0.58 };
@@ -96,18 +90,17 @@ export function PhaserRoom({ agent }: Props) {
             { x: W*0.38, y: H*0.68 },
           ];
 
-          // ── Background (outside room)
+          // ── Dark background
           const bg = this.add.graphics();
           bg.fillStyle(0x1b2029, 1);
           bg.fillRect(0, 0, W, H);
 
-          // ── Room walls (isometric back corner)
-          // Two wall panels meet at the apex (top-center), creating an L-shape
+          // ── Walls
           const roomG = this.add.graphics();
           const apexX = W * 0.50, apexY = H * 0.04;
-          const wallBase = H * 0.22; // where walls end and floor begins
+          const wallBase = H * 0.22;
 
-          // Left wall panel (lighter warm brown)
+          // Left wall (lighter warm brown)
           roomG.fillStyle(0x9e8a72, 1);
           roomG.beginPath();
           roomG.moveTo(0,      0);
@@ -117,7 +110,7 @@ export function PhaserRoom({ agent }: Props) {
           roomG.closePath();
           roomG.fillPath();
 
-          // Right wall panel (darker warm brown)
+          // Right wall (darker warm brown)
           roomG.fillStyle(0x7d6a56, 1);
           roomG.beginPath();
           roomG.moveTo(W,      0);
@@ -127,85 +120,71 @@ export function PhaserRoom({ agent }: Props) {
           roomG.closePath();
           roomG.fillPath();
 
-          // Wall centre ridge (bright accent)
+          // Wall ridge
           roomG.lineStyle(2, 0xc4a882, 1);
           roomG.lineBetween(apexX, apexY, apexX, wallBase);
 
-          // Wall baseboard / floor-wall seam
+          // Floor-wall seam
           roomG.lineStyle(1.5, 0x8a7060, 0.7);
           roomG.lineBetween(0, wallBase, W, wallBase);
 
-          // ── Floor (light Claw3D beige)
+          // ── Floor: light Claw3D beige
           const floorG = this.add.graphics();
           floorG.fillStyle(0xc8a97e, 1);
           floorG.fillRect(0, wallBase, W, H - wallBase);
 
-          // ── Isometric floor grid (diagonal lines like Claw3D)
+          // ── Diagonal grid on floor
           const gridG = this.add.graphics();
           gridG.lineStyle(1, 0xa07850, 0.28);
           const gridStep = 58;
           const floorH = H - wallBase;
-          // Right-leaning lines (\)
           for (let x = -floorH * 2; x < W + floorH * 2; x += gridStep) {
             gridG.lineBetween(x, wallBase, x + floorH, H);
           }
-          // Left-leaning lines (/)
           for (let x = -floorH * 2; x < W + floorH * 2; x += gridStep) {
             gridG.lineBetween(x, wallBase, x - floorH, H);
           }
 
-          // ── Desk + chair + monitor
           this.buildDeskScene(W*0.22, H*0.18);
-          // ── Sofa + table
           this.buildSofaScene(W*0.65, H*0.14);
 
-          // ── Voxel agent
           this.agentC = this.buildVoxelAgent(agent.pos_x, agent.pos_y);
-
           this.applyStatusEffect(agent.status);
           this.scheduleRoutine();
 
           sceneRef.current = this;
         }
 
-        // ── Desk, chair, monitor ───────────────────────────────────────
         private buildDeskScene(ox: number, oy: number) {
           const g = this.add.graphics();
 
-          // Chair back
           drawIso(g, ox-14, oy+8,  22, 44, 0x4a6fa5, 0x355090, 0x243878);
-          // Chair seat
           drawIso(g, ox-14, oy+46, 26, 10, 0x5a80c0, 0x4060a0, 0x2e4882);
 
-          // Desk surface
           drawIso(g, ox+32, oy+22, 54, 9,  0x9b7040, 0x7a5528, 0x5a3d18);
-          // Desk legs (4)
           drawIso(g, ox-18, oy+33, 5, 30, 0x5a3d18, 0x3d2810, 0x2a1c08);
           drawIso(g, ox+78, oy+33, 5, 30, 0x5a3d18, 0x3d2810, 0x2a1c08);
           drawIso(g, ox-18, oy+60, 5, 5,  0x3d2810, 0x2a1c08, 0x1c1006);
           drawIso(g, ox+78, oy+60, 5, 5,  0x3d2810, 0x2a1c08, 0x1c1006);
 
-          // Monitor stand + body
           drawIso(g, ox+56, oy+6,  18, 36, 0x222228, 0x161618, 0x0e0e10);
-          // Screen face (right face = visible screen)
           g.fillStyle(0x1a3a6a, 1);
           g.beginPath();
-          g.moveTo(ox+56,   oy+15);
-          g.lineTo(ox+74,   oy+6);
-          g.lineTo(ox+74,   oy+38);
-          g.lineTo(ox+56,   oy+47);
+          g.moveTo(ox+56, oy+15);
+          g.lineTo(ox+74, oy+6);
+          g.lineTo(ox+74, oy+38);
+          g.lineTo(ox+56, oy+47);
           g.closePath();
           g.fillPath();
-          // Screen glow
           g.fillStyle(0x4f6ef7, 0.18);
           g.beginPath();
-          g.moveTo(ox+56,   oy+15);
-          g.lineTo(ox+74,   oy+6);
-          g.lineTo(ox+74,   oy+38);
-          g.lineTo(ox+56,   oy+47);
+          g.moveTo(ox+56, oy+15);
+          g.lineTo(ox+74, oy+6);
+          g.lineTo(ox+74, oy+38);
+          g.lineTo(ox+56, oy+47);
           g.closePath();
           g.fillPath();
-          // Code lines on screen
+
           const lines = this.add.graphics();
           lines.lineStyle(1.5, 0x6fa3ef, 0.7);
           [0,1,2,3].forEach(i => {
@@ -215,7 +194,6 @@ export function PhaserRoom({ agent }: Props) {
             lines.lineBetween(x1, y1, x2, y2);
           });
 
-          // Keyboard
           const kb = this.add.graphics();
           kb.fillStyle(0x3a4060, 1);
           kb.beginPath();
@@ -227,55 +205,34 @@ export function PhaserRoom({ agent }: Props) {
           kb.fillPath();
         }
 
-        // ── Sofa scene ─────────────────────────────────────────────────
         private buildSofaScene(ox: number, oy: number) {
           const g = this.add.graphics();
-          // Sofa back
           drawIso(g, ox, oy,    50, 40, 0x2e3a5c, 0x1e2a4c, 0x121e3a);
-          // Sofa seat
           drawIso(g, ox, oy+36, 55, 14, 0x3a4878, 0x2a3868, 0x1a2858);
-          // Armrests
           drawIso(g, ox-44, oy+16, 10, 30, 0x2e3a5c, 0x1e2a4c, 0x121e3a);
           drawIso(g, ox+44, oy+16, 10, 30, 0x2e3a5c, 0x1e2a4c, 0x121e3a);
-          // Cushions
           drawIso(g, ox-16, oy+34, 22, 10, 0x444e7a, 0x343e6a, 0x242e5a);
           drawIso(g, ox+16, oy+34, 22, 10, 0x444e7a, 0x343e6a, 0x242e5a);
-          // Coffee table
           drawIso(g, ox+2, oy+78, 32, 5, 0x22263c, 0x161a2e, 0x0e1020);
           drawIso(g, ox-22, oy+84, 4, 14, 0x161a2e, 0x0e1020, 0x080c18);
           drawIso(g, ox+26, oy+84, 4, 14, 0x161a2e, 0x0e1020, 0x080c18);
 
-          // ── Plant decoration (near sofa corner) ──────────────────────
-          // Pot
           drawIso(g, ox - 62, oy + 58, 9, 12, 0x7a3a1e, 0x5a2a10, 0x3e1c08);
-          // Dirt top
           drawIso(g, ox - 62, oy + 55, 8, 3, 0x3d2510, 0x2a180a, 0x1c1006);
-          // Main stem / trunk
           drawIso(g, ox - 62, oy + 40, 4, 16, 0x2d5a1e, 0x1e3e12, 0x122808);
-          // Lower leaf cluster
           drawIso(g, ox - 62, oy + 30, 14, 10, 0x2a7a28, 0x1a5a1a, 0x0e3e10);
-          // Upper leaf cluster (brighter, smaller)
           drawIso(g, ox - 62, oy + 16, 10, 8, 0x38a030, 0x267a22, 0x185214);
-          // Top leaf tuft
           drawIso(g, ox - 62, oy + 6,  6, 6, 0x48b83c, 0x309028, 0x1e6018);
 
-          // ── Floor lamp (near sofa, other side) ───────────────────────
-          // Base plate
           drawIso(g, ox + 72, oy + 58, 10, 4, 0x1e1e22, 0x141416, 0x0c0c0e);
-          // Pole segment 1
           drawIso(g, ox + 72, oy + 46, 3, 14, 0x2a2a32, 0x1c1c22, 0x121216);
-          // Pole segment 2
           drawIso(g, ox + 72, oy + 34, 3, 12, 0x2a2a32, 0x1c1c22, 0x121216);
-          // Pole segment 3
           drawIso(g, ox + 72, oy + 22, 3, 12, 0x2a2a32, 0x1c1c22, 0x121216);
-          // Lamp shade (wider, bright)
           drawIso(g, ox + 72, oy + 8,  14, 10, 0xf0d080, 0xc8a840, 0xa07820);
-          // Lamp glow halo (soft ellipse)
           g.fillStyle(0xffe080, 0.10);
           g.fillEllipse(ox + 72 + 14, oy + 18, 44, 22);
         }
 
-        // ── Voxel character ────────────────────────────────────────────
         private buildVoxelAgent(x: number, y: number): Phaser.GameObjects.Container {
           const shirtC = this.avatarColor(agent.avatar_style);
           const shirtT = Phaser.Display.Color.ValueToColor(shirtC).lighten(8).color;
@@ -293,33 +250,22 @@ export function PhaserRoom({ agent }: Props) {
 
           const gfx = this.add.graphics();
 
-          // Shadow ellipse under feet
           gfx.fillStyle(0x000000, 0.30);
           gfx.fillEllipse(0, 46, 32, 10);
 
-          // Hair (slightly wider to cap the bigger head)
           drawIso(gfx, 0, -66, 20, 8,  hairC, hairL, hairR);
-          // Head — bigger: w=18 instead of 14
           drawIso(gfx, 0, -44, 18, 22, skinC, skinL, skinR);
-          // Eyes
           gfx.fillStyle(0x1a1020, 1);
           gfx.fillRect(-10, -31, 5, 5);
           gfx.fillRect( 5,  -31, 5, 5);
-          // Mouth
           gfx.fillStyle(0x9a6030, 0.7);
           gfx.fillRect(-4, -20, 8, 2);
-          // Body / shirt
           drawIso(gfx, 0, -14, 16, 24, shirtT, shirtL, shirtR);
-          // Left arm — more prominent: wider (w=7) and longer (h=22)
           drawIso(gfx, -23, -10, 7, 22, skinC, skinL, skinR);
-          // Right arm — more prominent: wider (w=7) and longer (h=22)
           drawIso(gfx,  23, -10, 7, 22, skinC, skinL, skinR);
-          // Left leg
           drawIso(gfx, -9, 28,   7, 16, pantsC, pantsL, pantsR);
-          // Right leg
           drawIso(gfx,  9, 28,   7, 16, pantsC, pantsL, pantsR);
 
-          // Name badge (dark rectangle with left accent + dot)
           const nbg = this.add.graphics();
           const dotC = this.statusHex(agent.status);
           const bw = agent.name.length * 9 + 40;
@@ -336,10 +282,8 @@ export function PhaserRoom({ agent }: Props) {
           ).setOrigin(0, 0.5);
 
           this.nameDot = this.add.circle(bw/2 - 12, 0, 5, dotC);
-
           const nameBadge = this.add.container(0, -88, [nbg, nameTxt, this.nameDot]);
 
-          // Status badge (dark rounded pill)
           this.statusBg = this.add.graphics();
           const stLabel = this.statusText(agent.status);
           const sw = stLabel.length * 8 + 28;
@@ -358,14 +302,12 @@ export function PhaserRoom({ agent }: Props) {
           return c;
         }
 
-        // ── Refresh status badge text/color ────────────────────────────
         private refreshBadge(status: AgentStatus) {
           if (!this.statusTxt) return;
           const label = this.statusText(status);
           this.statusTxt.setText(label);
           this.statusTxt.setColor(this.statusColor(status));
           if (this.nameDot) this.nameDot.setFillStyle(this.statusHex(status));
-          // Redraw status bg to fit new text width
           if (this.statusBg) {
             this.statusBg.clear();
             const sw = label.length * 8 + 28;
@@ -374,7 +316,6 @@ export function PhaserRoom({ agent }: Props) {
           }
         }
 
-        // ── Status effects ─────────────────────────────────────────────
         applyStatusEffect(status: AgentStatus) {
           if (this.bobTween) { this.bobTween.destroy(); this.bobTween = null; }
           this.agentC?.setAlpha(1);
@@ -425,7 +366,6 @@ export function PhaserRoom({ agent }: Props) {
         }
 
         updateStatus(status: AgentStatus) {
-          // Always react to working/replying/error even if same status
           if (status === this.currentStatus && !["working","replying","error"].includes(status)) return;
           if (["working","replying","error"].includes(status)) {
             this.routineLocked = false;
@@ -434,15 +374,11 @@ export function PhaserRoom({ agent }: Props) {
           this.applyStatusEffect(status);
         }
 
-        // ── Movement ───────────────────────────────────────────────────
         private moveTo(tx: number, ty: number, dur: number, onDone?: () => void) {
           this.tweens.add({
             targets: this.agentC, x: tx, y: ty, duration: dur,
             ease: "Sine.easeInOut",
-            onUpdate: () => {
-              // Walking bob
-              this.agentC.y += Math.sin(Date.now() / 100) * 0.5;
-            },
+            onUpdate: () => { this.agentC.y += Math.sin(Date.now() / 100) * 0.5; },
             onComplete: () => { if (onDone) onDone(); },
           });
         }
@@ -469,7 +405,6 @@ export function PhaserRoom({ agent }: Props) {
           this.typingTween = null;
         }
 
-        // ── Routine scheduler ──────────────────────────────────────────
         private scheduleRoutine() {
           this.time.addEvent({ delay: WORK_INTERVAL, loop: true, callback: () => {
             if (this.currentStatus !== "error") this.doWorkAtDesk();
@@ -512,7 +447,6 @@ export function PhaserRoom({ agent }: Props) {
           });
         }
 
-        // ── Helpers ────────────────────────────────────────────────────
         private statusText(s: AgentStatus): string {
           return { idle:"Idle", working:"Working", replying:"Replying", error:"Error" }[s];
         }
@@ -534,7 +468,7 @@ export function PhaserRoom({ agent }: Props) {
       gameRef.current = new Phaser.Game({
         type: Phaser.AUTO,
         parent: containerRef.current!,
-        backgroundColor: "#0d1120",
+        backgroundColor: "#1b2029",
         scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
         scene: [OfficeScene],
         banner: false,
@@ -557,4 +491,3 @@ export function PhaserRoom({ agent }: Props) {
 }
 
 type OfficeScene = { updateStatus: (s: AgentStatus) => void };
-// Tue Mar 31 22:55:09 UTC 2026
