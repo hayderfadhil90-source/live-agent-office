@@ -557,3 +557,4 @@ export function PhaserRoom({ agent }: Props) {
 }
 
 type OfficeScene = { updateStatus: (s: AgentStatus) => void };
+// Tue Mar 31 22:55:09 UTC 2026
