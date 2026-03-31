@@ -96,111 +96,62 @@ export function PhaserRoom({ agent }: Props) {
             { x: W*0.38, y: H*0.68 },
           ];
 
-          // ── Background: solid dark base
+          // ── Background (outside room)
           const bg = this.add.graphics();
-          bg.fillStyle(0x0d1120, 1);
+          bg.fillStyle(0x1b2029, 1);
           bg.fillRect(0, 0, W, H);
 
-          // ── Back walls (isometric perspective) ──────────────────────
-          // Left back wall (goes from top-left corner down to floor line)
-          const walls = this.add.graphics();
+          // ── Room walls (isometric back corner)
+          // Two wall panels meet at the apex (top-center), creating an L-shape
+          const roomG = this.add.graphics();
+          const apexX = W * 0.50, apexY = H * 0.04;
+          const wallBase = H * 0.22; // where walls end and floor begins
 
-          // Left wall panel
-          walls.fillStyle(0x252d48, 1);
-          walls.beginPath();
-          walls.moveTo(0,       H * 0.08);
-          walls.lineTo(W * 0.5, H * 0.0);
-          walls.lineTo(W * 0.5, H * 0.28);
-          walls.lineTo(0,       H * 0.38);
-          walls.closePath();
-          walls.fillPath();
+          // Left wall panel (lighter warm brown)
+          roomG.fillStyle(0x9e8a72, 1);
+          roomG.beginPath();
+          roomG.moveTo(0,      0);
+          roomG.lineTo(apexX,  apexY);
+          roomG.lineTo(apexX,  wallBase);
+          roomG.lineTo(0,      wallBase);
+          roomG.closePath();
+          roomG.fillPath();
 
-          // Right wall panel (slightly darker)
-          walls.fillStyle(0x1c2338, 1);
-          walls.beginPath();
-          walls.moveTo(W,       H * 0.08);
-          walls.lineTo(W * 0.5, H * 0.0);
-          walls.lineTo(W * 0.5, H * 0.28);
-          walls.lineTo(W,       H * 0.38);
-          walls.closePath();
-          walls.fillPath();
+          // Right wall panel (darker warm brown)
+          roomG.fillStyle(0x7d6a56, 1);
+          roomG.beginPath();
+          roomG.moveTo(W,      0);
+          roomG.lineTo(apexX,  apexY);
+          roomG.lineTo(apexX,  wallBase);
+          roomG.lineTo(W,      wallBase);
+          roomG.closePath();
+          roomG.fillPath();
 
-          // Wall edge ridge line
-          walls.lineStyle(2, 0x4a5880, 1);
-          walls.lineBetween(W * 0.5, H * 0.0, W * 0.5, H * 0.28);
+          // Wall centre ridge (bright accent)
+          roomG.lineStyle(2, 0xc4a882, 1);
+          roomG.lineBetween(apexX, apexY, apexX, wallBase);
 
-          // Baseboard lines
-          walls.lineStyle(1.5, 0x3a4460, 0.9);
-          walls.lineBetween(0, H * 0.38, W * 0.5, H * 0.28);
-          walls.lineBetween(W, H * 0.38, W * 0.5, H * 0.28);
+          // Wall baseboard / floor-wall seam
+          roomG.lineStyle(1.5, 0x8a7060, 0.7);
+          roomG.lineBetween(0, wallBase, W, wallBase);
 
-          // Horizontal depth stripes on walls
-          walls.lineStyle(1, 0x2e3855, 0.5);
-          for (let i = 1; i <= 4; i++) {
-            const t = i / 5;
-            walls.lineBetween(0,   H*0.08 + (H*0.30)*t, W*0.5*t,   H*0.08 + (H*0.30)*t * 0.5 + H*0.28*t*0.5);
-            walls.lineBetween(W,   H*0.08 + (H*0.30)*t, W-W*0.5*t, H*0.08 + (H*0.30)*t * 0.5 + H*0.28*t*0.5);
-          }
-
-          // ── Isometric floor tiles ────────────────────────────────────
-          const TILE_COLOR_A = 0x1e2845;  // visible navy blue tile
-          const TILE_COLOR_B = 0x263358;  // slightly lighter contrasting tile
-          const TILE_LINE    = 0x3a4d78;  // clear tile border
-
-          // Tile dimensions in iso space
-          // tW = full tile width, tH = half of tW (iso ratio)
-          const tW = 64;
-          const tH = tW / 2; // 32
-
-          // Floor region: from y ~ H*0.28 (back) to H (front)
-          // We'll draw a grid of iso diamonds covering the floor area
-          // The floor "vanishing point" is at (W/2, H*0.28)
-          // We use a simple parallelogram grid approach:
-          // Each tile col/row offset in screen space
+          // ── Floor (light Claw3D beige)
           const floorG = this.add.graphics();
+          floorG.fillStyle(0xc8a97e, 1);
+          floorG.fillRect(0, wallBase, W, H - wallBase);
 
-          // Number of tiles across and down
-          const COLS = Math.ceil(W / tW) + 4;
-          const ROWS = Math.ceil((H - H * 0.18) / tH) + 4;
-
-          // Origin of the iso grid (where col=0,row=0 tile top vertex sits)
-          const gridOriginX = W / 2;
-          const gridOriginY = H * 0.28;
-
-          for (let row = -1; row < ROWS; row++) {
-            for (let col = -Math.floor(COLS / 2) - 1; col < Math.ceil(COLS / 2) + 1; col++) {
-              // Top vertex of this diamond tile
-              const tx = gridOriginX + col * tW - row * tW;
-              const ty = gridOriginY + col * tH + row * tH;
-
-              // Skip tiles that are fully above the wall line or off-canvas
-              if (ty + tH * 2 < H * 0.22) continue;
-              if (ty > H + tH * 2)        continue;
-              if (tx - tW < -tW * 2)      continue;
-              if (tx + tW > W + tW * 2)   continue;
-
-              // Checkerboard: alternate by (col + row) parity
-              const fillC = (col + row + 400) % 2 === 0 ? TILE_COLOR_A : TILE_COLOR_B;
-
-              floorG.fillStyle(fillC, 1);
-              floorG.beginPath();
-              floorG.moveTo(tx,        ty);
-              floorG.lineTo(tx + tW,   ty + tH);
-              floorG.lineTo(tx,        ty + tH * 2);
-              floorG.lineTo(tx - tW,   ty + tH);
-              floorG.closePath();
-              floorG.fillPath();
-
-              // Tile border
-              floorG.lineStyle(0.7, TILE_LINE, 0.55);
-              floorG.beginPath();
-              floorG.moveTo(tx,        ty);
-              floorG.lineTo(tx + tW,   ty + tH);
-              floorG.lineTo(tx,        ty + tH * 2);
-              floorG.lineTo(tx - tW,   ty + tH);
-              floorG.closePath();
-              floorG.strokePath();
-            }
+          // ── Isometric floor grid (diagonal lines like Claw3D)
+          const gridG = this.add.graphics();
+          gridG.lineStyle(1, 0xa07850, 0.28);
+          const gridStep = 58;
+          const floorH = H - wallBase;
+          // Right-leaning lines (\)
+          for (let x = -floorH * 2; x < W + floorH * 2; x += gridStep) {
+            gridG.lineBetween(x, wallBase, x + floorH, H);
+          }
+          // Left-leaning lines (/)
+          for (let x = -floorH * 2; x < W + floorH * 2; x += gridStep) {
+            gridG.lineBetween(x, wallBase, x - floorH, H);
           }
 
           // ── Desk + chair + monitor
