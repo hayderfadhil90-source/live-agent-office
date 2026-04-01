@@ -68,6 +68,13 @@ export function PhaserRoom({ agent }: Props) {
         private bobTween: Phaser.Tweens.Tween | null = null;
         private routineLocked = false;
 
+        // Character parts for animation
+        private leftLegGfx!: Phaser.GameObjects.Graphics;
+        private rightLegGfx!: Phaser.GameObjects.Graphics;
+        private bodyGfx!: Phaser.GameObjects.Graphics;
+        private isSitting = false;
+        private isWalking = false;
+
         private deskPos!:   {x:number;y:number};
         private sofaPos!:   {x:number;y:number};
         private centerPos!: {x:number;y:number};
@@ -233,38 +240,76 @@ export function PhaserRoom({ agent }: Props) {
           g.fillEllipse(ox + 72 + 14, oy + 18, 44, 22);
         }
 
-        private buildVoxelAgent(x: number, y: number): Phaser.GameObjects.Container {
+        // Toggle sitting/standing pose
+        private setSitting(sitting: boolean) {
+          this.isSitting = sitting;
+          if (this.leftLegGfx) this.leftLegGfx.setVisible(!sitting);
+          if (this.rightLegGfx) this.rightLegGfx.setVisible(!sitting);
+          // Reset leg positions when standing
+          if (!sitting) {
+            if (this.leftLegGfx)  this.leftLegGfx.y  = 0;
+            if (this.rightLegGfx) this.rightLegGfx.y = 0;
+          }
+          // Redraw body for sitting/standing arms
+          this.redrawBody(sitting);
+        }
+
+        private redrawBody(sitting: boolean) {
+          if (!this.bodyGfx) return;
           const shirtC = this.avatarColor(agent.avatar_style);
           const shirtT = Phaser.Display.Color.ValueToColor(shirtC).lighten(8).color;
           const shirtL = Phaser.Display.Color.ValueToColor(shirtC).darken(22).color;
           const shirtR = Phaser.Display.Color.ValueToColor(shirtC).darken(40).color;
-          const skinC  = 0xc8915a;
-          const skinL  = 0xa87040;
-          const skinR  = 0x8a5a2e;
-          const hairC  = 0x2c1b0e;
-          const hairL  = 0x1e1208;
-          const hairR  = 0x120c04;
+          const skinC = 0xc8915a; const skinL = 0xa87040; const skinR = 0x8a5a2e;
+          const hairC = 0x2c1b0e; const hairL = 0x1e1208; const hairR = 0x120c04;
+          this.bodyGfx.clear();
+          // Hair
+          drawIso(this.bodyGfx, 0, -68, 22, 10, hairC, hairL, hairR);
+          // Head (big cubic)
+          drawIso(this.bodyGfx, 0, -46, 20, 26, skinC, skinL, skinR);
+          // Eyes
+          this.bodyGfx.fillStyle(0x1a1020, 1);
+          this.bodyGfx.fillRect(-12, -32, 6, 6);
+          this.bodyGfx.fillRect(6,   -32, 6, 6);
+          // Mouth
+          this.bodyGfx.fillStyle(0x9a6030, 0.7);
+          this.bodyGfx.fillRect(-5, -20, 10, 2);
+          // Torso
+          drawIso(this.bodyGfx, 0, -12, 18, 22, shirtT, shirtL, shirtR);
+          if (sitting) {
+            // Arms forward on desk
+            drawIso(this.bodyGfx, -14, 8, 8, 10, skinC, skinL, skinR);
+            drawIso(this.bodyGfx,  14, 8, 8, 10, skinC, skinL, skinR);
+          } else {
+            // Arms at sides
+            drawIso(this.bodyGfx, -26, -8, 8, 22, skinC, skinL, skinR);
+            drawIso(this.bodyGfx,  26, -8, 8, 22, skinC, skinL, skinR);
+          }
+        }
+
+        private buildVoxelAgent(x: number, y: number): Phaser.GameObjects.Container {
           const pantsC = 0x3d4a6e;
           const pantsL = 0x2d3a5e;
           const pantsR = 0x1d2a4e;
 
-          const gfx = this.add.graphics();
+          // Shadow
+          const shadowGfx = this.add.graphics();
+          shadowGfx.fillStyle(0x000000, 0.28);
+          shadowGfx.fillEllipse(0, 48, 36, 12);
 
-          gfx.fillStyle(0x000000, 0.30);
-          gfx.fillEllipse(0, 46, 32, 10);
+          // Body (head + torso + arms) — redrawn on sit/stand
+          this.bodyGfx = this.add.graphics();
+          this.redrawBody(false);
 
-          drawIso(gfx, 0, -66, 20, 8,  hairC, hairL, hairR);
-          drawIso(gfx, 0, -44, 18, 22, skinC, skinL, skinR);
-          gfx.fillStyle(0x1a1020, 1);
-          gfx.fillRect(-10, -31, 5, 5);
-          gfx.fillRect( 5,  -31, 5, 5);
-          gfx.fillStyle(0x9a6030, 0.7);
-          gfx.fillRect(-4, -20, 8, 2);
-          drawIso(gfx, 0, -14, 16, 24, shirtT, shirtL, shirtR);
-          drawIso(gfx, -23, -10, 7, 22, skinC, skinL, skinR);
-          drawIso(gfx,  23, -10, 7, 22, skinC, skinL, skinR);
-          drawIso(gfx, -9, 28,   7, 16, pantsC, pantsL, pantsR);
-          drawIso(gfx,  9, 28,   7, 16, pantsC, pantsL, pantsR);
+          // Legs (separate for walking animation)
+          this.leftLegGfx = this.add.graphics();
+          drawIso(this.leftLegGfx, -9, 18, 8, 20, pantsC, pantsL, pantsR);
+          // Shoes
+          drawIso(this.leftLegGfx, -9, 36, 9, 6, 0x1a1a2e, 0x111122, 0x0a0a18);
+
+          this.rightLegGfx = this.add.graphics();
+          drawIso(this.rightLegGfx, 9, 18, 8, 20, pantsC, pantsL, pantsR);
+          drawIso(this.rightLegGfx, 9, 36, 9, 6, 0x1a1a2e, 0x111122, 0x0a0a18);
 
           const nbg = this.add.graphics();
           const dotC = this.statusHex(agent.status);
@@ -282,7 +327,7 @@ export function PhaserRoom({ agent }: Props) {
           ).setOrigin(0, 0.5);
 
           this.nameDot = this.add.circle(bw/2 - 12, 0, 5, dotC);
-          const nameBadge = this.add.container(0, -88, [nbg, nameTxt, this.nameDot]);
+          const nameBadge = this.add.container(0, -100, [nbg, nameTxt, this.nameDot]);
 
           this.statusBg = this.add.graphics();
           const stLabel = this.statusText(agent.status);
@@ -295,9 +340,12 @@ export function PhaserRoom({ agent }: Props) {
             fontFamily:"Inter, system-ui, sans-serif", fontStyle:"600",
           }).setOrigin(0.5);
 
-          const statusBadge = this.add.container(0, 62, [this.statusBg, this.statusTxt]);
+          const statusBadge = this.add.container(0, 68, [this.statusBg, this.statusTxt]);
 
-          const c = this.add.container(x, y, [gfx, nameBadge, statusBadge]);
+          const c = this.add.container(x, y, [
+            shadowGfx, this.leftLegGfx, this.rightLegGfx,
+            this.bodyGfx, nameBadge, statusBadge
+          ]);
           c.setDepth(10);
           return c;
         }
@@ -374,12 +422,26 @@ export function PhaserRoom({ agent }: Props) {
           this.applyStatusEffect(status);
         }
 
+        // Walking leg animation
+        update(time: number) {
+          if (!this.isWalking || this.isSitting) return;
+          const phase = time * 0.007;
+          if (this.leftLegGfx)  this.leftLegGfx.y  =  Math.sin(phase) * 9;
+          if (this.rightLegGfx) this.rightLegGfx.y = -Math.sin(phase) * 9;
+        }
+
         private moveTo(tx: number, ty: number, dur: number, onDone?: () => void) {
+          this.setSitting(false);
+          this.isWalking = true;
           this.tweens.add({
             targets: this.agentC, x: tx, y: ty, duration: dur,
             ease: "Sine.easeInOut",
-            onUpdate: () => { this.agentC.y += Math.sin(Date.now() / 100) * 0.5; },
-            onComplete: () => { if (onDone) onDone(); },
+            onComplete: () => {
+              this.isWalking = false;
+              if (this.leftLegGfx)  this.leftLegGfx.y  = 0;
+              if (this.rightLegGfx) this.rightLegGfx.y = 0;
+              if (onDone) onDone();
+            },
           });
         }
 
@@ -395,14 +457,16 @@ export function PhaserRoom({ agent }: Props) {
 
         private typingTween: Phaser.Tweens.Tween | null = null;
         private playTyping() {
+          this.setSitting(true);
           this.typingTween = this.tweens.add({
-            targets: this.agentC, y: "-=3", duration: 200,
+            targets: this.agentC, y: "-=2", duration: 220,
             yoyo: true, repeat: -1, ease: "Sine.easeInOut",
           });
         }
         private stopTyping() {
           this.typingTween?.destroy();
           this.typingTween = null;
+          this.setSitting(false);
         }
 
         private scheduleRoutine() {
@@ -436,9 +500,9 @@ export function PhaserRoom({ agent }: Props) {
         private doRestOnSofa() {
           this.routineLocked = true;
           this.moveTo(this.sofaPos.x, this.sofaPos.y, 1600, () => {
-            this.agentC.setScale(1, 0.78);
+            this.setSitting(true);
             this.time.delayedCall(REST_DURATION, () => {
-              this.agentC.setScale(1, 1);
+              this.setSitting(false);
               this.moveTo(this.centerPos.x, this.centerPos.y, 1400, () => {
                 this.routineLocked = false;
                 this.startWander();
