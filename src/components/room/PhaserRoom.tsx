@@ -431,6 +431,7 @@ export function PhaserRoom({ agent }: Props) {
         }
 
         private moveTo(tx: number, ty: number, dur: number, onDone?: () => void) {
+          this.tweens.killTweensOf(this.agentC);
           this.setSitting(false);
           this.isWalking = true;
           this.tweens.add({
