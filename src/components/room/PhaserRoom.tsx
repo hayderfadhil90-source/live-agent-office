@@ -79,6 +79,7 @@ export function PhaserRoom({ agent }: Props) {
         private sofaPos!:   {x:number;y:number};
         private centerPos!: {x:number;y:number};
         private wanderPts!: {x:number;y:number}[];
+        private chairGfx!:  Phaser.GameObjects.Graphics;
 
         constructor() { super({ key: "OfficeScene" }); }
         preload() {}
@@ -155,11 +156,37 @@ export function PhaserRoom({ agent }: Props) {
           this.buildDeskScene(W*0.22, H*0.18);
           this.buildSofaScene(W*0.65, H*0.14);
 
+          // ── Office chair at desk (depth 9 = behind character, in front of desk)
+          this.chairGfx = this.add.graphics();
+          this.chairGfx.setDepth(9);
+          this.buildChair(this.chairGfx, this.deskPos.x, this.deskPos.y);
+
           this.agentC = this.buildVoxelAgent(agent.pos_x, agent.pos_y);
           this.applyStatusEffect(agent.status);
           this.scheduleRoutine();
 
           sceneRef.current = this;
+        }
+
+        private buildChair(g: Phaser.GameObjects.Graphics, cx: number, cy: number) {
+          // cx/cy = character center when sitting at desk
+          // In isometric, "behind" = lower Y (higher on screen)
+          const bx = cx - 2,  by = cy - 16;   // backrest origin (behind character)
+          const sx = cx - 2,  sy = cy + 10;   // seat origin
+          const px = cx,      py = sy + 16;   // pole
+          const bsC = 0x3a52b0, bsL = 0x2a42a0, bsR = 0x1a3290; // blue chair
+          const bsT = 0x4a62c0;
+          const dkC = 0x1c1e2c, dkL = 0x141620, dkR = 0x0c0e14; // dark metal
+          // Backrest (tall, blue) – drawn first so character sits "in front"
+          drawIso(g, bx, by - 22, 16, 32, bsT, bsL, bsR);
+          // Seat cushion (flat, slightly wider)
+          drawIso(g, sx, sy, 22, 8, bsT, bsC, bsR);
+          // Central pole
+          drawIso(g, px, py, 4, 14, dkC, dkL, dkR);
+          // Base star arms (two crossing bars)
+          drawIso(g, px, py + 12, 18, 4, dkC, dkL, dkR);
+          drawIso(g, px - 14, py + 15, 8, 4, dkC, dkL, dkR);
+          drawIso(g, px + 14, py + 15, 8, 4, dkC, dkL, dkR);
         }
 
         private buildDeskScene(ox: number, oy: number) {
@@ -458,6 +485,8 @@ export function PhaserRoom({ agent }: Props) {
 
         private typingTween: Phaser.Tweens.Tween | null = null;
         private playTyping() {
+          // Shift character up 14px so they appear to sit ON the chair seat
+          this.agentC.y -= 14;
           this.setSitting(true);
           this.typingTween = this.tweens.add({
             targets: this.agentC, y: "-=2", duration: 220,
@@ -467,6 +496,8 @@ export function PhaserRoom({ agent }: Props) {
         private stopTyping() {
           this.typingTween?.destroy();
           this.typingTween = null;
+          // Restore exact desk Y (in case tween left it mid-cycle)
+          this.agentC.y = this.deskPos.y;
           this.setSitting(false);
         }
 
