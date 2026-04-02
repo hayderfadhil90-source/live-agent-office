@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import {
   MessageSquare,
@@ -9,9 +10,11 @@ import {
   RefreshCw,
   Bot,
   Activity,
+  Clock,
 } from "lucide-react";
 import { AvatarCircle } from "@/components/ui/AvatarCircle";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { getAgentHealth, getActivityScore } from "@/lib/agent-health";
 import type { Agent, AgentEvent, EventType } from "@/lib/types";
 
 interface Props {
@@ -40,6 +43,18 @@ const EVENT_LABEL: Record<EventType, string> = {
 };
 
 export function AgentPanel({ agent, events }: Props) {
+  // Re-compute health every 30 s so the live counter ticks
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const health = getAgentHealth(agent, events);
+  const score = getActivityScore(agent, events);
+  const isActiveStatus =
+    agent.status === "working" || agent.status === "replying";
+
   return (
     <aside className="w-72 flex-shrink-0 border-l border-surface-200/10 bg-surface-900 flex flex-col overflow-hidden">
       {/* Agent info */}
@@ -52,18 +67,59 @@ export function AgentPanel({ agent, events }: Props) {
           </div>
         </div>
 
-        {/* Status */}
+        {/* Status row */}
         <div className="flex items-center justify-between py-2.5 px-3 rounded-lg bg-surface-800">
           <span className="text-xs text-surface-200/50">Current status</span>
           <StatusBadge status={agent.status} />
         </div>
 
+        {/* Health + live timer */}
+        <div className="mt-2 flex items-center justify-between py-2.5 px-3 rounded-lg bg-surface-800">
+          <span className="text-xs text-surface-200/50">Health</span>
+          <div className="flex items-center gap-1.5">
+            {isActiveStatus && health.minutesInStatus > 0 && (
+              <span className="text-xs text-surface-200/35 flex items-center gap-0.5">
+                <Clock className="w-3 h-3" />
+                {health.minutesInStatus}m
+              </span>
+            )}
+            <span
+              className={`text-xs font-semibold px-2 py-0.5 rounded-full ${health.color} ${health.bgColor}`}
+            >
+              {health.label}
+            </span>
+          </div>
+        </div>
+
+        {/* Activity score */}
+        <div className="mt-2 px-3 py-2.5 rounded-lg bg-surface-800">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs text-surface-200/50">Activity score</span>
+            <span className="text-sm font-bold text-surface-50">
+              {score.score}
+              <span className="text-xs font-normal text-surface-200/30">/100</span>
+            </span>
+          </div>
+          {/* Score bar */}
+          <div className="h-1 rounded-full bg-surface-700 overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-700"
+              style={{
+                width: `${score.score}%`,
+                backgroundColor: scoreColor(score.score),
+              }}
+            />
+          </div>
+          {/* Score breakdown */}
+          <div className="mt-2 flex gap-3 text-xs text-surface-200/35">
+            <span>{score.tasksCompleted} tasks</span>
+            <span>{score.repliesSent} replies</span>
+            <span>{score.otherEvents} events</span>
+          </div>
+        </div>
+
         {/* Meta */}
         <div className="mt-3 space-y-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-surface-200/40">Template</span>
-            <span className="text-xs text-surface-200/60 capitalize">Office</span>
-          </div>
           <div className="flex items-center justify-between">
             <span className="text-xs text-surface-200/40">Events today</span>
             <span className="text-xs text-surface-200/60">{events.length}</span>
@@ -107,6 +163,12 @@ export function AgentPanel({ agent, events }: Props) {
       </div>
     </aside>
   );
+}
+
+function scoreColor(score: number): string {
+  if (score >= 70) return "#34d399"; // emerald
+  if (score >= 40) return "#fbbf24"; // amber
+  return "#f87171";                  // red
 }
 
 function EventRow({ event }: { event: AgentEvent }) {
