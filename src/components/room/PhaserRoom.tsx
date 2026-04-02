@@ -412,6 +412,10 @@ export function PhaserRoom({ agent }: Props) {
                   this.playTyping();
                 });
               }
+              // Safety: auto-reset to idle after 3 min if no update arrives
+              this.time.delayedCall(3 * 60 * 1000, () => {
+                if (this.currentStatus === "working") this.updateStatus("idle");
+              });
               break;
 
             case "replying":
@@ -423,6 +427,10 @@ export function PhaserRoom({ agent }: Props) {
               this.bobTween = this.tweens.add({
                 targets: this.nameDot, alpha: 0.2, duration: 300,
                 yoyo: true, repeat: -1,
+              });
+              // Auto-reset to idle after 15 s if no task_completed arrives
+              this.time.delayedCall(15 * 1000, () => {
+                if (this.currentStatus === "replying") this.updateStatus("idle");
               });
               break;
 
