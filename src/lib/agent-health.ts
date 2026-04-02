@@ -169,15 +169,22 @@ export function getResponseTime(events: AgentEvent[]): ResponseTimeResult {
   const chronological = [...events].reverse();
 
   const diffs: number[] = [];
-  let pendingReceivedAt: number | null = null;
+  let pendingStartAt: number | null = null;
 
   for (const e of chronological) {
-    if (e.event_type === "message_received") {
-      pendingReceivedAt = new Date(e.created_at).getTime();
-    } else if (e.event_type === "reply_sent" && pendingReceivedAt !== null) {
-      const diff = (new Date(e.created_at).getTime() - pendingReceivedAt) / 1000;
+    // Accept either message_received or thinking_started as the start of a cycle
+    if (
+      e.event_type === "message_received" ||
+      e.event_type === "thinking_started"
+    ) {
+      pendingStartAt = new Date(e.created_at).getTime();
+    } else if (
+      (e.event_type === "reply_sent" || e.event_type === "task_completed") &&
+      pendingStartAt !== null
+    ) {
+      const diff = (new Date(e.created_at).getTime() - pendingStartAt) / 1000;
       if (diff > 0) diffs.push(diff);
-      pendingReceivedAt = null;
+      pendingStartAt = null;
     }
   }
 
