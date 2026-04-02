@@ -1,4 +1,5 @@
 import type { Agent, AgentEvent } from "@/lib/types/index";
+import type { TodayCounts } from "@/lib/hooks/useRealtimeAgent";
 
 // ─── Agent Health ─────────────────────────────────────────────────────────────
 //
@@ -104,27 +105,35 @@ export interface ScoreResult {
 
 export function getActivityScore(
   agent: Agent,
-  events: AgentEvent[]
+  events: AgentEvent[],
+  todayCounts?: TodayCounts
 ): ScoreResult {
-  // Only count today's events
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  let tasksCompleted: number;
+  let repliesSent: number;
+  let otherEvents: number;
 
-  const todayEvents = events.filter(
-    (e) => new Date(e.created_at) >= todayStart
-  );
-
-  const tasksCompleted = todayEvents.filter(
-    (e) => e.event_type === "task_completed"
-  ).length;
-
-  const repliesSent = todayEvents.filter(
-    (e) => e.event_type === "reply_sent"
-  ).length;
-
-  const otherEvents = todayEvents.filter(
-    (e) => e.event_type !== "task_completed" && e.event_type !== "reply_sent"
-  ).length;
+  if (todayCounts) {
+    // Use full-day counts from DB query (accurate)
+    tasksCompleted = todayCounts.tasksCompleted;
+    repliesSent = todayCounts.repliesSent;
+    otherEvents = todayCounts.total - tasksCompleted - repliesSent;
+  } else {
+    // Fallback: count from in-memory events (last 50 only)
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEvents = events.filter(
+      (e) => new Date(e.created_at) >= todayStart
+    );
+    tasksCompleted = todayEvents.filter(
+      (e) => e.event_type === "task_completed"
+    ).length;
+    repliesSent = todayEvents.filter(
+      (e) => e.event_type === "reply_sent"
+    ).length;
+    otherEvents = todayEvents.filter(
+      (e) => e.event_type !== "task_completed" && e.event_type !== "reply_sent"
+    ).length;
+  }
 
   const { health } = getAgentHealth(agent, events);
   const stuckPenalty = health === "stuck" ? 10 : 0;

@@ -15,11 +15,13 @@ import {
 import { AvatarCircle } from "@/components/ui/AvatarCircle";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { getAgentHealth, getActivityScore } from "@/lib/agent-health";
+import type { TodayCounts } from "@/lib/hooks/useRealtimeAgent";
 import type { Agent, AgentEvent, EventType } from "@/lib/types";
 
 interface Props {
   agent: Agent;
   events: AgentEvent[];
+  todayCounts: TodayCounts;
 }
 
 const EVENT_ICON: Record<EventType, React.ReactNode> = {
@@ -42,7 +44,7 @@ const EVENT_LABEL: Record<EventType, string> = {
   status_changed: "Status changed",
 };
 
-export function AgentPanel({ agent, events }: Props) {
+export function AgentPanel({ agent, events, todayCounts }: Props) {
   // Re-compute health every 30 s so the live counter ticks
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -51,7 +53,7 @@ export function AgentPanel({ agent, events }: Props) {
   }, []);
 
   const health = getAgentHealth(agent, events);
-  const score = getActivityScore(agent, events);
+  const score = getActivityScore(agent, events, todayCounts);
   const isActiveStatus =
     agent.status === "working" || agent.status === "replying";
 
@@ -122,7 +124,7 @@ export function AgentPanel({ agent, events }: Props) {
         <div className="mt-3 space-y-1.5">
           <div className="flex items-center justify-between">
             <span className="text-xs text-surface-200/40">Events today</span>
-            <span className="text-xs text-surface-200/60">{events.length}</span>
+            <span className="text-xs text-surface-200/60">{todayCounts.total || events.length}</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-xs text-surface-200/40">Last active</span>

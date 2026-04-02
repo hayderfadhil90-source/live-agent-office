@@ -11,7 +11,7 @@ interface Props {
 }
 
 export function LiveRoom({ agent: initialAgent, initialEvents }: Props) {
-  const { agent, events, isConnected } = useRealtimeAgent(
+  const { agent, events, todayCounts, isConnected } = useRealtimeAgent(
     initialAgent.id,
     initialAgent,
     initialEvents
@@ -45,7 +45,7 @@ export function LiveRoom({ agent: initialAgent, initialEvents }: Props) {
       </div>
 
       {/* Right panel */}
-      <AgentPanel agent={currentAgent} events={events} />
+      <AgentPanel agent={currentAgent} events={events} todayCounts={todayCounts} />
     </div>
   );
 }
