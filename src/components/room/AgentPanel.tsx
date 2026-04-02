@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { AvatarCircle } from "@/components/ui/AvatarCircle";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { getAgentHealth, getActivityScore } from "@/lib/agent-health";
+import { getAgentHealth, getActivityScore, getResponseTime } from "@/lib/agent-health";
 import type { TodayCounts } from "@/lib/hooks/useRealtimeAgent";
 import type { Agent, AgentEvent, EventType } from "@/lib/types";
 
@@ -54,6 +54,7 @@ export function AgentPanel({ agent, events, todayCounts }: Props) {
 
   const health = getAgentHealth(agent, events);
   const score = getActivityScore(agent, events, todayCounts);
+  const responseTime = getResponseTime(events);
   const isActiveStatus =
     agent.status === "working" || agent.status === "replying";
 
@@ -125,6 +126,23 @@ export function AgentPanel({ agent, events, todayCounts }: Props) {
           <div className="flex items-center justify-between">
             <span className="text-xs text-surface-200/40">Events today</span>
             <span className="text-xs text-surface-200/60">{todayCounts.total || events.length}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-surface-200/40">Avg reply time</span>
+            <span className={`text-xs font-medium ${
+              responseTime.samples === 0
+                ? "text-surface-200/30"
+                : responseTime.avgSeconds > 120
+                ? "text-amber-400"
+                : "text-emerald-400"
+            }`}>
+              {responseTime.label}
+              {responseTime.samples > 0 && (
+                <span className="text-surface-200/25 font-normal ml-1">
+                  ({responseTime.samples} samples)
+                </span>
+              )}
+            </span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-xs text-surface-200/40">Last active</span>

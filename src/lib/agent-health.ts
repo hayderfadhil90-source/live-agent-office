@@ -151,3 +151,51 @@ export function getActivityScore(
     otherEvents,
   };
 }
+
+// ─── Response Time ────────────────────────────────────────────────────────────
+//
+// Average time between message_received → reply_sent pairs in the event log.
+// Events are newest-first, so we reverse to walk chronologically.
+// Returns null if no complete pairs exist.
+
+export interface ResponseTimeResult {
+  avgSeconds: number;       // average seconds per reply
+  samples: number;          // how many message→reply pairs were found
+  label: string;            // human-readable: "12s", "1m 4s", "—"
+}
+
+export function getResponseTime(events: AgentEvent[]): ResponseTimeResult {
+  // Walk events oldest-first
+  const chronological = [...events].reverse();
+
+  const diffs: number[] = [];
+  let pendingReceivedAt: number | null = null;
+
+  for (const e of chronological) {
+    if (e.event_type === "message_received") {
+      pendingReceivedAt = new Date(e.created_at).getTime();
+    } else if (e.event_type === "reply_sent" && pendingReceivedAt !== null) {
+      const diff = (new Date(e.created_at).getTime() - pendingReceivedAt) / 1000;
+      if (diff > 0) diffs.push(diff);
+      pendingReceivedAt = null;
+    }
+  }
+
+  if (diffs.length === 0) {
+    return { avgSeconds: 0, samples: 0, label: "—" };
+  }
+
+  const avg = diffs.reduce((a, b) => a + b, 0) / diffs.length;
+  return {
+    avgSeconds: Math.round(avg),
+    samples: diffs.length,
+    label: formatSeconds(Math.round(avg)),
+  };
+}
+
+function formatSeconds(s: number): string {
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem > 0 ? `${m}m ${rem}s` : `${m}m`;
+}
