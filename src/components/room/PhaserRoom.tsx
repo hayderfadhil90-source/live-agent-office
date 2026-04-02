@@ -2,15 +2,16 @@
 
 import { useEffect, useRef } from "react";
 import type { Agent, AgentStatus } from "@/lib/types";
+import type { AgentHealth } from "@/lib/agent-health";
 
-interface Props { agent: Agent; }
+interface Props { agent: Agent; health?: AgentHealth; }
 
 const WORK_INTERVAL = 60 * 60 * 1000;
 const REST_INTERVAL = 20 * 60 * 1000;
 const WORK_DURATION = 5  * 60 * 1000;
 const REST_DURATION = 3  * 60 * 1000;
 
-export function PhaserRoom({ agent }: Props) {
+export function PhaserRoom({ agent, health }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef      = useRef<import("phaser").Game | null>(null);
   const sceneRef     = useRef<OfficeScene | null>(null);
@@ -80,6 +81,8 @@ export function PhaserRoom({ agent }: Props) {
         private centerPos!: {x:number;y:number};
         private wanderPts!: {x:number;y:number}[];
         private chairGfx!:  Phaser.GameObjects.Graphics;
+        private healthBadge!: Phaser.GameObjects.Container;
+        private healthPulseTween: Phaser.Tweens.Tween | null = null;
 
         constructor() { super({ key: "OfficeScene" }); }
         preload() {}
@@ -369,9 +372,20 @@ export function PhaserRoom({ agent }: Props) {
 
           const statusBadge = this.add.container(0, 68, [this.statusBg, this.statusTxt]);
 
+          // Health warning badge (! icon above name badge, hidden by default)
+          const hBg = this.add.graphics();
+          hBg.fillStyle(0xef4444, 1);
+          hBg.fillCircle(0, 0, 10);
+          const hTxt = this.add.text(0, 0, "!", {
+            fontSize: "13px", color: "#ffffff",
+            fontFamily: "Inter, system-ui, sans-serif", fontStyle: "800",
+          }).setOrigin(0.5);
+          this.healthBadge = this.add.container(28, -128, [hBg, hTxt]);
+          this.healthBadge.setVisible(false);
+
           const c = this.add.container(x, y, [
             shadowGfx, this.leftLegGfx, this.rightLegGfx,
-            this.bodyGfx, nameBadge, statusBadge
+            this.bodyGfx, nameBadge, statusBadge, this.healthBadge
           ]);
           c.setDepth(10);
           return c;
@@ -455,6 +469,31 @@ export function PhaserRoom({ agent }: Props) {
           }
           this.currentStatus = status;
           this.applyStatusEffect(status);
+        }
+
+        updateHealth(h: AgentHealth) {
+          if (!this.healthBadge) return;
+          this.healthPulseTween?.destroy();
+          this.healthPulseTween = null;
+
+          if (h === "stuck" || h === "slow") {
+            const color = h === "stuck" ? 0xef4444 : 0xf59e0b;
+            // Redraw badge circle in the right colour
+            const bg = this.healthBadge.getAt(0) as Phaser.GameObjects.Graphics;
+            bg.clear();
+            bg.fillStyle(color, 1);
+            bg.fillCircle(0, 0, 10);
+            this.healthBadge.setVisible(true);
+            // Pulse the badge to draw attention
+            this.healthPulseTween = this.tweens.add({
+              targets: this.healthBadge,
+              scaleX: 1.3, scaleY: 1.3,
+              duration: 600, yoyo: true, repeat: -1,
+              ease: "Sine.easeInOut",
+            });
+          } else {
+            this.healthBadge.setVisible(false);
+          }
         }
 
         // Walking leg animation
@@ -591,7 +630,14 @@ export function PhaserRoom({ agent }: Props) {
     sceneRef.current?.updateStatus(agent.status);
   }, [agent.status]);
 
+  useEffect(() => {
+    if (health) sceneRef.current?.updateHealth(health);
+  }, [health]);
+
   return <div ref={containerRef} className="w-full h-full" />;
 }
 
-type OfficeScene = { updateStatus: (s: AgentStatus) => void };
+type OfficeScene = {
+  updateStatus: (s: AgentStatus) => void;
+  updateHealth: (h: AgentHealth) => void;
+};

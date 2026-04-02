@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRealtimeAgent } from "@/lib/hooks/useRealtimeAgent";
+import { getAgentHealth } from "@/lib/agent-health";
 import { PhaserRoom } from "@/components/room/PhaserRoom";
 import { AgentPanel } from "@/components/room/AgentPanel";
 import type { Agent, AgentEvent } from "@/lib/types";
@@ -19,11 +21,20 @@ export function LiveRoom({ agent: initialAgent, initialEvents }: Props) {
 
   const currentAgent = agent ?? initialAgent;
 
+  // Re-derive health every 30s so the Phaser badge stays in sync
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const health = getAgentHealth(currentAgent, events);
+
   return (
     <div className="flex gap-0 h-[calc(100vh-4rem)] -mx-8 -mt-8">
-      {/* Phaser room — takes most of the width */}
+      {/* Phaser room */}
       <div className="flex-1 relative overflow-hidden bg-surface-900">
-        <PhaserRoom agent={currentAgent} />
+        <PhaserRoom agent={currentAgent} health={health.health} />
 
         {/* Connection indicator */}
         <div className="absolute top-3 left-3 z-10">
