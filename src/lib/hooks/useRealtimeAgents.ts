@@ -14,19 +14,29 @@ export interface AgentState {
   agent: Agent;
   events: AgentEvent[];
   todayCounts: TodayCounts;
+  hourlyBuckets: number[]; // 24 values, index = hour of day
 }
 
 const ZERO_COUNTS: TodayCounts = { total: 0, tasksCompleted: 0, repliesSent: 0 };
+const ZERO_BUCKETS = (): number[] => new Array(24).fill(0);
 
-function tally(rows: { event_type: EventType }[]): TodayCounts {
-  return rows.reduce(
-    (acc, { event_type }) => ({
-      total: acc.total + 1,
-      tasksCompleted: acc.tasksCompleted + (event_type === "task_completed" ? 1 : 0),
-      repliesSent: acc.repliesSent + (event_type === "reply_sent" ? 1 : 0),
-    }),
+function tally(rows: { event_type: EventType; created_at: string }[]): {
+  counts: TodayCounts;
+  buckets: number[];
+} {
+  const buckets = ZERO_BUCKETS();
+  const counts = rows.reduce(
+    (acc, { event_type, created_at }) => {
+      buckets[new Date(created_at).getHours()]++;
+      return {
+        total: acc.total + 1,
+        tasksCompleted: acc.tasksCompleted + (event_type === "task_completed" ? 1 : 0),
+        repliesSent: acc.repliesSent + (event_type === "reply_sent" ? 1 : 0),
+      };
+    },
     ZERO_COUNTS
   );
+  return { counts, buckets };
 }
 
 export function useRealtimeAgents(
@@ -45,6 +55,9 @@ export function useRealtimeAgents(
   const [countsMap, setCountsMap] = useState<Map<string, TodayCounts>>(
     () => new Map(initialAgents.map((a) => [a.id, ZERO_COUNTS]))
   );
+  const [bucketsMap, setBucketsMap] = useState<Map<string, number[]>>(
+    () => new Map(initialAgents.map((a) => [a.id, ZERO_BUCKETS()]))
+  );
   const [isConnected, setIsConnected] = useState(false);
 
   // Fetch today's full counts once per agent on mount
@@ -57,16 +70,14 @@ export function useRealtimeAgents(
     for (const ag of initialAgents) {
       supabase
         .from("events")
-        .select("event_type")
+        .select("event_type, created_at")
         .eq("agent_id", ag.id)
         .gte("created_at", todayStart.toISOString())
         .then(({ data }) => {
           if (!data) return;
-          setCountsMap((prev) => {
-            const next = new Map(prev);
-            next.set(ag.id, tally(data as { event_type: EventType }[]));
-            return next;
-          });
+          const { counts, buckets } = tally(data as { event_type: EventType; created_at: string }[]);
+          setCountsMap((prev) => new Map(prev).set(ag.id, counts));
+          setBucketsMap((prev) => new Map(prev).set(ag.id, buckets));
         });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -127,6 +138,13 @@ export function useRealtimeAgents(
               });
               return next;
             });
+            setBucketsMap((prev) => {
+              const next = new Map(prev);
+              const b = [...(next.get(ag.id) ?? ZERO_BUCKETS())];
+              b[new Date(newEvent.created_at).getHours()]++;
+              next.set(ag.id, b);
+              return next;
+            });
           }
         )
         .subscribe((status) => {
@@ -146,6 +164,7 @@ export function useRealtimeAgents(
     agent: agentMap.get(a.id) ?? a,
     events: eventsMap.get(a.id) ?? [],
     todayCounts: countsMap.get(a.id) ?? ZERO_COUNTS,
+    hourlyBuckets: bucketsMap.get(a.id) ?? ZERO_BUCKETS(),
   }));
 
   return { agentStates, isConnected };

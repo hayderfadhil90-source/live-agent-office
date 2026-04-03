@@ -90,12 +90,12 @@ export function AgentPanel({ agentStates }: Props) {
       )}
 
       {/* Selected agent info */}
-      <AgentDetail agent={agent} events={events} todayCounts={todayCounts} />
+      <AgentDetail agent={agent} events={events} todayCounts={todayCounts} hourlyBuckets={selected.hourlyBuckets} />
     </aside>
   );
 }
 
-function AgentDetail({ agent, events, todayCounts }: { agent: Agent; events: AgentEvent[]; todayCounts: import("@/lib/hooks/useRealtimeAgents").TodayCounts }) {
+function AgentDetail({ agent, events, todayCounts, hourlyBuckets }: { agent: Agent; events: AgentEvent[]; todayCounts: import("@/lib/hooks/useRealtimeAgents").TodayCounts; hourlyBuckets: number[] }) {
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 30_000);
@@ -168,6 +168,9 @@ function AgentDetail({ agent, events, todayCounts }: { agent: Agent; events: Age
           </div>
         </div>
 
+        {/* Hourly sparkline */}
+        <HourlySparkline buckets={hourlyBuckets} />
+
         {/* Meta */}
         <div className="mt-3 space-y-1.5">
           <div className="flex items-center justify-between">
@@ -234,6 +237,53 @@ function scoreColor(score: number): string {
   if (score >= 70) return "#34d399";
   if (score >= 40) return "#fbbf24";
   return "#f87171";
+}
+
+function HourlySparkline({ buckets }: { buckets: number[] }) {
+  const now = new Date().getHours();
+  const max = Math.max(...buckets, 1);
+  const total = buckets.reduce((s, v) => s + v, 0);
+
+  return (
+    <div className="mt-2 px-3 py-2.5 rounded-lg bg-surface-800">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs text-surface-200/50">Activity today</span>
+        <span className="text-xs text-surface-200/30">{total} events</span>
+      </div>
+      <div className="flex items-end gap-px h-8">
+        {buckets.map((count, hour) => {
+          const pct = count > 0 ? Math.max((count / max) * 100, 12) : 0;
+          const isCurrent = hour === now;
+          const isPast = hour < now;
+          return (
+            <div
+              key={hour}
+              title={`${hour}:00 — ${count} event${count !== 1 ? "s" : ""}`}
+              className="flex-1 rounded-sm"
+              style={{
+                height: count === 0 ? "3px" : `${pct}%`,
+                backgroundColor:
+                  count === 0
+                    ? "rgba(255,255,255,0.06)"
+                    : isCurrent
+                    ? "#6366f1"
+                    : isPast
+                    ? "rgba(99,102,241,0.55)"
+                    : "rgba(99,102,241,0.2)",
+              }}
+            />
+          );
+        })}
+      </div>
+      <div className="flex justify-between mt-1.5 text-xs text-surface-200/20">
+        <span>0h</span>
+        <span>6h</span>
+        <span>12h</span>
+        <span>18h</span>
+        <span>{now}h</span>
+      </div>
+    </div>
+  );
 }
 
 function EventRow({ event }: { event: AgentEvent }) {
