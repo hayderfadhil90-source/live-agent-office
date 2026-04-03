@@ -77,7 +77,8 @@ export function AgentSetup({ workspace, agents: initialAgents, token: initialTok
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ||
+    (typeof window !== "undefined" ? window.location.origin : "");
   const webhookUrl = `${appUrl}/api/events`;
 
   function selectAgent(id: string | "new") {
