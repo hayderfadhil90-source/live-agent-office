@@ -12,7 +12,7 @@ export default function AgentPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [agent, setAgent] = useState<Agent | null>(null);
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [token, setToken] = useState<WebhookToken | null>(null);
 
   useEffect(() => {
@@ -20,7 +20,6 @@ export default function AgentPage() {
 
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
-
       if (!user) { router.push("/login"); return; }
 
       const { data: ws } = await supabase
@@ -30,16 +29,15 @@ export default function AgentPage() {
         .single();
 
       if (!ws) { router.push("/workspace"); return; }
-
       setWorkspace(ws);
 
-      const { data: ag } = await supabase
+      const { data: ags } = await supabase
         .from("agents")
         .select("*")
         .eq("workspace_id", ws.id)
-        .single();
+        .order("created_at", { ascending: true });
 
-      setAgent(ag);
+      setAgents((ags as Agent[]) ?? []);
 
       const { data: tk } = await supabase
         .from("webhook_tokens")
@@ -58,11 +56,7 @@ export default function AgentPage() {
 
   return (
     <DashboardLayout>
-      <AgentSetup
-        workspace={workspace!}
-        agent={agent}
-        token={token}
-      />
+      <AgentSetup workspace={workspace!} agents={agents} token={token} />
     </DashboardLayout>
   );
 }
