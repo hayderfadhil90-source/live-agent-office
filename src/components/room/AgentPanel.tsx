@@ -15,13 +15,11 @@ import {
 import { AvatarCircle } from "@/components/ui/AvatarCircle";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { getAgentHealth, getActivityScore, getResponseTime } from "@/lib/agent-health";
-import type { TodayCounts } from "@/lib/hooks/useRealtimeAgent";
+import type { AgentState } from "@/lib/hooks/useRealtimeAgents";
 import type { Agent, AgentEvent, EventType } from "@/lib/types";
 
 interface Props {
-  agent: Agent;
-  events: AgentEvent[];
-  todayCounts: TodayCounts;
+  agentStates: AgentState[];
 }
 
 const EVENT_ICON: Record<EventType, React.ReactNode> = {
@@ -44,8 +42,60 @@ const EVENT_LABEL: Record<EventType, string> = {
   status_changed: "Status changed",
 };
 
-export function AgentPanel({ agent, events, todayCounts }: Props) {
-  // Re-compute health every 30 s so the live counter ticks
+export function AgentPanel({ agentStates }: Props) {
+  const [selectedId, setSelectedId] = useState<string>(agentStates[0]?.agent.id ?? "");
+
+  // Keep selectedId in sync if agents change
+  useEffect(() => {
+    if (!agentStates.find((s) => s.agent.id === selectedId) && agentStates.length > 0) {
+      setSelectedId(agentStates[0].agent.id);
+    }
+  }, [agentStates, selectedId]);
+
+  const selected = agentStates.find((s) => s.agent.id === selectedId) ?? agentStates[0];
+  if (!selected) return null;
+
+  const { agent, events, todayCounts } = selected;
+
+  return (
+    <aside className="w-72 flex-shrink-0 border-l border-surface-200/10 bg-surface-900 flex flex-col overflow-hidden">
+      {/* Fleet switcher — only shown when 2+ agents */}
+      {agentStates.length > 1 && (
+        <div className="px-3 pt-3 pb-2 border-b border-surface-200/10 flex gap-1.5 flex-wrap">
+          {agentStates.map(({ agent: ag }) => {
+            const h = getAgentHealth(ag, agentStates.find(s => s.agent.id === ag.id)?.events ?? []);
+            return (
+              <button
+                key={ag.id}
+                onClick={() => setSelectedId(ag.id)}
+                className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-colors ${
+                  selectedId === ag.id
+                    ? "bg-brand-500/15 text-brand-400 border border-brand-500/20"
+                    : "text-surface-200/40 hover:text-surface-200/60 border border-transparent"
+                }`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                  ag.status === "working" || ag.status === "replying"
+                    ? "bg-amber-400"
+                    : ag.status === "error"
+                    ? "bg-red-400"
+                    : "bg-emerald-400/60"
+                }`} />
+                {ag.name}
+                <span className={`text-xs ${h.color} opacity-70`}>{h.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Selected agent info */}
+      <AgentDetail agent={agent} events={events} todayCounts={todayCounts} />
+    </aside>
+  );
+}
+
+function AgentDetail({ agent, events, todayCounts }: { agent: Agent; events: AgentEvent[]; todayCounts: import("@/lib/hooks/useRealtimeAgents").TodayCounts }) {
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 30_000);
@@ -55,11 +105,10 @@ export function AgentPanel({ agent, events, todayCounts }: Props) {
   const health = getAgentHealth(agent, events);
   const score = getActivityScore(agent, events, todayCounts);
   const responseTime = getResponseTime(events);
-  const isActiveStatus =
-    agent.status === "working" || agent.status === "replying";
+  const isActiveStatus = agent.status === "working" || agent.status === "replying";
 
   return (
-    <aside className="w-72 flex-shrink-0 border-l border-surface-200/10 bg-surface-900 flex flex-col overflow-hidden">
+    <>
       {/* Agent info */}
       <div className="p-5 border-b border-surface-200/10">
         <div className="flex items-center gap-3 mb-4">
@@ -103,7 +152,6 @@ export function AgentPanel({ agent, events, todayCounts }: Props) {
               <span className="text-xs font-normal text-surface-200/30">/100</span>
             </span>
           </div>
-          {/* Score bar */}
           <div className="h-1 rounded-full bg-surface-700 overflow-hidden">
             <div
               className="h-full rounded-full transition-all duration-700"
@@ -113,7 +161,6 @@ export function AgentPanel({ agent, events, todayCounts }: Props) {
               }}
             />
           </div>
-          {/* Score breakdown */}
           <div className="mt-2 flex gap-3 text-xs text-surface-200/35">
             <span>{score.tasksCompleted} tasks</span>
             <span>{score.repliesSent} replies</span>
@@ -148,9 +195,7 @@ export function AgentPanel({ agent, events, todayCounts }: Props) {
             <span className="text-xs text-surface-200/40">Last active</span>
             <span className="text-xs text-surface-200/60">
               {events[0]
-                ? formatDistanceToNow(new Date(events[0].created_at), {
-                    addSuffix: true,
-                  })
+                ? formatDistanceToNow(new Date(events[0].created_at), { addSuffix: true })
                 : "Never"}
             </span>
           </div>
@@ -181,14 +226,14 @@ export function AgentPanel({ agent, events, todayCounts }: Props) {
           </div>
         )}
       </div>
-    </aside>
+    </>
   );
 }
 
 function scoreColor(score: number): string {
-  if (score >= 70) return "#34d399"; // emerald
-  if (score >= 40) return "#fbbf24"; // amber
-  return "#f87171";                  // red
+  if (score >= 70) return "#34d399";
+  if (score >= 40) return "#fbbf24";
+  return "#f87171";
 }
 
 function EventRow({ event }: { event: AgentEvent }) {

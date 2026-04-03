@@ -1,5 +1,5 @@
 import type { Agent, AgentEvent } from "@/lib/types/index";
-import type { TodayCounts } from "@/lib/hooks/useRealtimeAgent";
+import type { TodayCounts } from "@/lib/hooks/useRealtimeAgents";
 
 // ─── Agent Health ─────────────────────────────────────────────────────────────
 //

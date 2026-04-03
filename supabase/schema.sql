@@ -52,8 +52,9 @@ create table if not exists agents (
   pos_y        integer not null default 280,
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now(),
-  -- MVP: one agent per workspace
-  unique (workspace_id)
+  -- Removed unique(workspace_id) to support multiple agents per workspace
+  -- Run this in Supabase SQL editor to apply to existing DBs:
+  --   ALTER TABLE agents DROP CONSTRAINT agents_workspace_id_key;
 );
 
 -- Auto-update updated_at

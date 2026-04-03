@@ -11,15 +11,14 @@ import type { Agent, AgentEvent } from "@/lib/types";
 export default function RoomPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [agent, setAgent] = useState<Agent | null>(null);
-  const [events, setEvents] = useState<AgentEvent[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [eventsMap, setEventsMap] = useState<Record<string, AgentEvent[]>>({});
 
   useEffect(() => {
     const supabase = createClient();
 
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
-
       if (!user) { router.push("/login"); return; }
 
       const { data: ws } = await supabase
@@ -30,24 +29,27 @@ export default function RoomPage() {
 
       if (!ws) { router.push("/workspace"); return; }
 
-      const { data: ag } = await supabase
+      const { data: ags } = await supabase
         .from("agents")
         .select("*")
         .eq("workspace_id", ws.id)
-        .single();
+        .order("created_at", { ascending: true });
 
-      if (!ag) { router.push("/agent"); return; }
+      if (!ags || ags.length === 0) { router.push("/agent"); return; }
 
-      setAgent(ag);
+      const map: Record<string, AgentEvent[]> = {};
+      for (const ag of ags) {
+        const { data: evs } = await supabase
+          .from("events")
+          .select("*")
+          .eq("agent_id", ag.id)
+          .order("created_at", { ascending: false })
+          .limit(50);
+        map[ag.id] = evs ?? [];
+      }
 
-      const { data: evs } = await supabase
-        .from("events")
-        .select("*")
-        .eq("agent_id", ag.id)
-        .order("created_at", { ascending: false })
-        .limit(50);
-
-      setEvents(evs ?? []);
+      setAgents(ags as Agent[]);
+      setEventsMap(map);
       setLoading(false);
     }
 
@@ -58,7 +60,7 @@ export default function RoomPage() {
 
   return (
     <DashboardLayout>
-      <LiveRoom agent={agent!} initialEvents={events} />
+      <LiveRoom agents={agents} initialEventsMap={eventsMap} />
     </DashboardLayout>
   );
 }
