@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Bot, Monitor, ArrowRight, Key, Plus, Pencil } from "lucide-react";
+import { Bot, Monitor, ArrowRight, Key, Plus, Pencil, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { AvatarCircle } from "@/components/ui/AvatarCircle";
@@ -133,6 +133,21 @@ export function AgentSetup({ workspace, agents: initialAgents, token: initialTok
     router.refresh();
   };
 
+  const handleDelete = async () => {
+    if (isNew || !selectedAgent) return;
+    if (!confirm(`Delete agent "${selectedAgent.name}"? This cannot be undone.`)) return;
+    setLoading(true);
+    const supabase = createClient();
+    const { error: err } = await supabase.from("agents").delete().eq("id", selectedId);
+    if (err) { setError(err.message); setLoading(false); return; }
+    const remaining = agents.filter((a) => a.id !== selectedId);
+    setAgents(remaining);
+    setSelectedId(remaining.length > 0 ? remaining[0].id : "new");
+    selectAgent(remaining.length > 0 ? remaining[0].id : "new");
+    setLoading(false);
+    router.refresh();
+  };
+
   return (
     <div className="max-w-2xl">
       {/* Header */}
@@ -257,16 +272,29 @@ export function AgentSetup({ workspace, agents: initialAgents, token: initialTok
             </div>
           </div>
 
-          <button type="submit" disabled={loading} className="btn-primary w-full">
-            {loading ? (
-              <LoadingSpinner size="sm" />
-            ) : (
-              <>
-                {isNew ? "Create agent" : "Save changes"}
-                <ArrowRight className="w-4 h-4" />
-              </>
+          <div className="flex gap-2">
+            <button type="submit" disabled={loading} className="btn-primary flex-1">
+              {loading ? (
+                <LoadingSpinner size="sm" />
+              ) : (
+                <>
+                  {isNew ? "Create agent" : "Save changes"}
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
+            </button>
+            {!isNew && (
+              <button
+                type="button"
+                disabled={loading}
+                onClick={handleDelete}
+                className="px-3 py-2 rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors disabled:opacity-40"
+                title="Delete agent"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
             )}
-          </button>
+          </div>
         </form>
       </div>
 

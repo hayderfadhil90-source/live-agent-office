@@ -586,7 +586,7 @@ export function PhaserRoom({ agents, healthMap }: Props) {
           if (status === "working" || status === "replying") {
             const seat = this.claimDesk(cd);
             if (seat) {
-              this.moveTo(cd, seat.x, seat.y, WALK_SPEED, () => {
+              this.routedMoveTo(cd, seat.x, seat.y, WALK_SPEED, () => {
                 this.setSitting(cd, true);
                 if (status === "working") this.playTyping(cd);
                 else {
@@ -666,12 +666,48 @@ export function PhaserRoom({ agents, healthMap }: Props) {
             targets: cd.container,
             x: tx,
             y: ty,
-            duration: dur,
+            duration: Math.max(200, dur),
             ease: "Sine.easeInOut",
             onComplete: () => {
               cd.isWalking = false;
               onComplete?.();
             },
+          });
+        }
+
+        // Route through doorway when crossing between left and right zones
+        private routedMoveTo(cd: CharData, tx: number, ty: number, totalDur: number, onComplete?: () => void) {
+          const W = this.scale.width;
+          const H = this.scale.height;
+          const DIV_X  = W * 0.577;
+          const DIV_W  = W * 0.028;
+          const DOOR_Y = H * 0.08 + H * 0.67; // vertical center of doorway gap
+          const L_DOOR = DIV_X - 28;            // just left of wall
+          const R_DOOR = DIV_X + DIV_W + 28;    // just right of wall
+
+          const fromX = cd.container?.x ?? 0;
+          const fromY = cd.container?.y ?? 0;
+          const crossingToRight = fromX < DIV_X && tx > DIV_X + DIV_W;
+          const crossingToLeft  = fromX > DIV_X + DIV_W && tx < DIV_X;
+
+          if (!crossingToRight && !crossingToLeft) {
+            this.moveTo(cd, tx, ty, totalDur, onComplete);
+            return;
+          }
+
+          // Build waypoints: [doorEntry, doorExit, dest]
+          const wp1x = crossingToRight ? L_DOOR : R_DOOR;
+          const wp2x = crossingToRight ? R_DOOR : L_DOOR;
+
+          const d0 = Phaser.Math.Distance.Between(fromX, fromY, wp1x, DOOR_Y);
+          const d1 = Phaser.Math.Distance.Between(wp1x, DOOR_Y, wp2x, DOOR_Y);
+          const d2 = Phaser.Math.Distance.Between(wp2x, DOOR_Y, tx, ty);
+          const total = d0 + d1 + d2 || 1;
+
+          this.moveTo(cd, wp1x, DOOR_Y, totalDur * (d0 / total), () => {
+            this.moveTo(cd, wp2x, DOOR_Y, totalDur * (d1 / total), () => {
+              this.moveTo(cd, tx, ty, totalDur * (d2 / total), onComplete);
+            });
           });
         }
 
@@ -684,12 +720,26 @@ export function PhaserRoom({ agents, healthMap }: Props) {
         private scheduleRoutine(cd: CharData) {
           if (cd.routineLocked) return;
           const pts = this.wanderPts;
-          const target = pts[Math.floor(Math.random() * pts.length)];
-          const dist = Phaser.Math.Distance.Between(
-            cd.container?.x ?? 0, cd.container?.y ?? 0, target.x, target.y
-          );
+
+          // Avoid points already occupied by other agents (collision avoidance)
+          const myX = cd.container?.x ?? 0;
+          const myY = cd.container?.y ?? 0;
+          const free = pts.filter(p => {
+            let taken = false;
+            this.chars.forEach((other) => {
+              if (other.agent.id === cd.agent.id) return;
+              const ox = other.container?.x ?? 0;
+              const oy = other.container?.y ?? 0;
+              if (Phaser.Math.Distance.Between(ox, oy, p.x, p.y) < 60) taken = true;
+            });
+            return !taken;
+          });
+          const pool = free.length > 0 ? free : pts;
+          const target = pool[Math.floor(Math.random() * pool.length)];
+
+          const dist = Phaser.Math.Distance.Between(myX, myY, target.x, target.y);
           const dur = Math.max(WANDER_SPEED * 0.4, (dist / 160) * WANDER_SPEED);
-          this.moveTo(cd, target.x, target.y, dur, () => {
+          this.routedMoveTo(cd, target.x, target.y, dur, () => {
             if (!cd.routineLocked) {
               this.time.delayedCall(WANDER_PAUSE + Math.random() * 800, () => {
                 this.scheduleRoutine(cd);
