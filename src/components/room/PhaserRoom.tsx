@@ -1,68 +1,71 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { Agent, AgentStatus } from "@/lib/types";
-import type { AgentHealth } from "@/lib/agent-health";
+import type { Agent, AgentStatus } from "@/lib/types/index";
+import type { HealthResult } from "@/lib/agent-health";
 
 interface Props {
   agents: Agent[];
-  healthMap?: Record<string, AgentHealth>;
+  healthMap?: Record<string, HealthResult>;
 }
 
-const WORK_INTERVAL = 60 * 60 * 1000;
-const REST_INTERVAL = 20 * 60 * 1000;
-const WORK_DURATION = 5  * 60 * 1000;
-const REST_DURATION = 3  * 60 * 1000;
+// ─────────────────────────────────────────────────────────────────────────────
+//  CONFIGURATION — change these values to tweak layout and behaviour
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** ms to walk to a desk when status → working (lower = faster) */
+const WALK_SPEED       = 1800;
+/** ms per wander step when idle */
+const WANDER_SPEED     = 2400;
+/** ms pause between wander steps */
+const WANDER_PAUSE     = 1300;
+/** auto-reset working → idle if no update arrives */
+const WORKING_TIMEOUT  = 3 * 60 * 1000;
+/** auto-reset replying → idle if no task_completed arrives */
+const REPLYING_TIMEOUT = 15 * 1000;
+
+// WHERE TO CHANGE THINGS:
+//  • Number of desks      → DESK_LAYOUT array inside create()
+//  • Number of agents     → agents[] in src/app/room/page.tsx
+//  • Walk / wander speed  → WALK_SPEED / WANDER_SPEED above
+//  • Wander zone points   → wanderPts array inside create()
+//  • Sit/stand behaviour  → applyStatusEffect()
+//  • Zone positions       → drawFloors() / buildWorkspace / buildKitchen / buildLounge
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function PhaserRoom({ agents, healthMap }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef      = useRef<import("phaser").Game | null>(null);
-  const sceneRef     = useRef<OfficeScene | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sceneRef     = useRef<any>(null);
+  const statusRef    = useRef<Record<string, AgentStatus>>({});
+  const healthRef    = useRef<Record<string, HealthResult>>({});
 
   useEffect(() => {
     if (!containerRef.current || gameRef.current) return;
     let mounted = true;
+    let waitForScene: ReturnType<typeof setInterval> | undefined;
 
     import("phaser").then((Phaser) => {
       if (!mounted || !containerRef.current) return;
 
-      // ─── Draw one isometric voxel cube ──────────────────────────────────────
+      // ── isometric voxel cube helper ────────────────────────────────────────
       function drawIso(
         g: Phaser.GameObjects.Graphics,
-        cx: number, cy: number,
-        w: number, h: number,
+        cx: number, cy: number, w: number, h: number,
         topC: number, leftC: number, rightC: number
       ) {
         const d = w / 2;
         g.fillStyle(topC, 1);
-        g.beginPath();
-        g.moveTo(cx,     cy);
-        g.lineTo(cx + w, cy + d);
-        g.lineTo(cx,     cy + d * 2);
-        g.lineTo(cx - w, cy + d);
-        g.closePath();
-        g.fillPath();
-
+        g.beginPath(); g.moveTo(cx,cy); g.lineTo(cx+w,cy+d); g.lineTo(cx,cy+d*2); g.lineTo(cx-w,cy+d); g.closePath(); g.fillPath();
         g.fillStyle(leftC, 1);
-        g.beginPath();
-        g.moveTo(cx - w, cy + d);
-        g.lineTo(cx,     cy + d * 2);
-        g.lineTo(cx,     cy + d * 2 + h);
-        g.lineTo(cx - w, cy + d + h);
-        g.closePath();
-        g.fillPath();
-
+        g.beginPath(); g.moveTo(cx-w,cy+d); g.lineTo(cx,cy+d*2); g.lineTo(cx,cy+d*2+h); g.lineTo(cx-w,cy+d+h); g.closePath(); g.fillPath();
         g.fillStyle(rightC, 1);
-        g.beginPath();
-        g.moveTo(cx,     cy + d * 2);
-        g.lineTo(cx + w, cy + d);
-        g.lineTo(cx + w, cy + d + h);
-        g.lineTo(cx,     cy + d * 2 + h);
-        g.closePath();
-        g.fillPath();
+        g.beginPath(); g.moveTo(cx,cy+d*2); g.lineTo(cx+w,cy+d); g.lineTo(cx+w,cy+d+h); g.lineTo(cx,cy+d*2+h); g.closePath(); g.fillPath();
       }
 
-      // ─── Per-character state ─────────────────────────────────────────────────
+      // ── per-character mutable state ────────────────────────────────────────
       interface CharData {
         agent: Agent;
         container: Phaser.GameObjects.Container;
@@ -73,8 +76,7 @@ export function PhaserRoom({ agents, healthMap }: Props) {
         statusTxt: Phaser.GameObjects.Text;
         statusBg: Phaser.GameObjects.Graphics;
         nameDot: Phaser.GameObjects.Arc;
-        deskPos: { x: number; y: number };
-        wanderPts: { x: number; y: number }[];
+        assignedDeskIdx: number;        // -1 = none claimed
         currentStatus: AgentStatus;
         isSitting: boolean;
         isWalking: boolean;
@@ -85,9 +87,11 @@ export function PhaserRoom({ agents, healthMap }: Props) {
       }
 
       class OfficeScene extends Phaser.Scene {
-        private chars: Map<string, CharData> = new Map();
-        private sofaPos!: { x: number; y: number };
-        private centerPos!: { x: number; y: number };
+        // ── scene-level data ──────────────────────────────────────────────────
+        private chars:        Map<string, CharData>  = new Map();
+        private deskSeats:    { x: number; y: number }[] = [];   // seat positions
+        private deskOccupied: Map<number, string>    = new Map(); // idx → agentId
+        private wanderPts:    { x: number; y: number }[] = [];
 
         constructor() { super({ key: "OfficeScene" }); }
         preload() {}
@@ -96,315 +100,426 @@ export function PhaserRoom({ agents, healthMap }: Props) {
           const W = this.scale.width;
           const H = this.scale.height;
 
-          this.sofaPos   = { x: W * 0.72, y: H * 0.33 };
-          this.centerPos = { x: W * 0.47, y: H * 0.58 };
+          // ── DESK LAYOUT ─────────────────────────────────────────────────────
+          // ox,oy = desk drawing origin  |  sx,sy = character seat  |  depth
+          // Add or remove rows here to change number of desks (max = agents.length)
+          const DESK_LAYOUT = [
+            { ox: W*0.04, oy: H*0.10, sx: W*0.10, sy: H*0.28, depth: 6  }, // back-left
+            { ox: W*0.27, oy: H*0.10, sx: W*0.33, sy: H*0.28, depth: 6  }, // back-right
+            { ox: W*0.04, oy: H*0.40, sx: W*0.10, sy: H*0.58, depth: 10 }, // front-left
+            { ox: W*0.27, oy: H*0.40, sx: W*0.33, sy: H*0.58, depth: 10 }, // front-right
+          ];
+          this.deskSeats = DESK_LAYOUT.map(d => ({ x: d.sx, y: d.sy }));
 
-          // ── Background
-          const bg = this.add.graphics();
-          bg.fillStyle(0x1b2029, 1);
-          bg.fillRect(0, 0, W, H);
-
-          // ── Walls
-          const roomG = this.add.graphics();
-          const apexX = W * 0.50, apexY = H * 0.04;
-          const wallBase = H * 0.22;
-
-          roomG.fillStyle(0x9e8a72, 1);
-          roomG.beginPath();
-          roomG.moveTo(0,      0);
-          roomG.lineTo(apexX,  apexY);
-          roomG.lineTo(apexX,  wallBase);
-          roomG.lineTo(0,      wallBase);
-          roomG.closePath();
-          roomG.fillPath();
-
-          roomG.fillStyle(0x7d6a56, 1);
-          roomG.beginPath();
-          roomG.moveTo(W,      0);
-          roomG.lineTo(apexX,  apexY);
-          roomG.lineTo(apexX,  wallBase);
-          roomG.lineTo(W,      wallBase);
-          roomG.closePath();
-          roomG.fillPath();
-
-          roomG.lineStyle(2, 0xc4a882, 1);
-          roomG.lineBetween(apexX, apexY, apexX, wallBase);
-          roomG.lineStyle(1.5, 0x8a7060, 0.7);
-          roomG.lineBetween(0, wallBase, W, wallBase);
-
-          // ── Floor
-          const floorG = this.add.graphics();
-          floorG.fillStyle(0xc8a97e, 1);
-          floorG.fillRect(0, wallBase, W, H - wallBase);
-
-          // ── Diagonal floor grid
-          const gridG = this.add.graphics();
-          gridG.lineStyle(1, 0xa07850, 0.28);
-          const gridStep = 58;
-          const floorH = H - wallBase;
-          for (let x = -floorH * 2; x < W + floorH * 2; x += gridStep) {
-            gridG.lineBetween(x, wallBase, x + floorH, H);
-          }
-          for (let x = -floorH * 2; x < W + floorH * 2; x += gridStep) {
-            gridG.lineBetween(x, wallBase, x - floorH, H);
-          }
-
-          // ── Desk slots (up to 3 agents)
-          const SLOTS = [
-            {
-              ox: W * 0.22, oy: H * 0.18,
-              charX: W * 0.26, charY: H * 0.40,
-              wander: [
-                { x: W*0.20, y: H*0.55 }, { x: W*0.32, y: H*0.48 },
-                { x: W*0.28, y: H*0.68 }, { x: W*0.15, y: H*0.62 },
-              ],
-            },
-            {
-              ox: W * 0.44, oy: H * 0.18,
-              charX: W * 0.48, charY: H * 0.42,
-              wander: [
-                { x: W*0.42, y: H*0.52 }, { x: W*0.55, y: H*0.46 },
-                { x: W*0.50, y: H*0.65 }, { x: W*0.38, y: H*0.70 },
-              ],
-            },
-            {
-              ox: W * 0.22, oy: H * 0.30,
-              charX: W * 0.26, charY: H * 0.52,
-              wander: [
-                { x: W*0.18, y: H*0.65 }, { x: W*0.35, y: H*0.58 },
-                { x: W*0.25, y: H*0.75 }, { x: W*0.12, y: H*0.72 },
-              ],
-            },
+          // ── WANDER POINTS (walkable areas in all three zones) ────────────────
+          // Add/remove points to control where idle agents walk
+          this.wanderPts = [
+            { x: W*0.19, y: H*0.36 }, // workspace: corridor between rows
+            { x: W*0.46, y: H*0.36 },
+            { x: W*0.07, y: H*0.22 }, // workspace: top corners
+            { x: W*0.46, y: H*0.22 },
+            { x: W*0.07, y: H*0.55 }, // workspace: left corridor
+            { x: W*0.19, y: H*0.76 }, // workspace: bottom area
+            { x: W*0.46, y: H*0.74 },
+            { x: W*0.52, y: H*0.76 }, // doorway into right side
+            { x: W*0.68, y: H*0.22 }, // kitchen area
+            { x: W*0.84, y: H*0.30 },
+            { x: W*0.76, y: H*0.38 },
+            { x: W*0.72, y: H*0.66 }, // lounge area
+            { x: W*0.86, y: H*0.78 },
+            { x: W*0.66, y: H*0.84 },
           ];
 
-          const slicedAgents = agents.slice(0, SLOTS.length);
+          // ── DRAW SCENE ──────────────────────────────────────────────────────
+          this.drawBackground(W, H);
+          this.drawFloors(W, H);
+          this.drawWalls(W, H);
+          this.drawDividers(W, H);
+          this.buildWorkspaceDecor(W, H);
+          this.buildKitchen(W, H);
+          this.buildLounge(W, H);
 
-          // Build a desk scene per slot
-          slicedAgents.forEach((_, i) => {
-            this.buildDeskScene(SLOTS[i].ox, SLOTS[i].oy);
+          // ── DESKS + CHAIRS ──────────────────────────────────────────────────
+          DESK_LAYOUT.forEach(d => {
+            this.buildDesk(d.ox, d.oy);
+            const cg = this.add.graphics();
+            cg.setDepth(d.depth + 1);
+            this.buildChair(cg, d.sx, d.sy);
           });
 
-          // Sofa always present
-          this.buildSofaScene(W * 0.65, H * 0.14);
-
-          // Build chair + character per agent
-          slicedAgents.forEach((ag, i) => {
-            const slot = SLOTS[i];
-            const chairGfx = this.add.graphics();
-            chairGfx.setDepth(9 + i * 2);
-            this.buildChair(chairGfx, slot.charX, slot.charY);
-
-            const cd = this.buildVoxelAgent(ag, slot.charX, slot.charY, 10 + i * 2);
-            cd.wanderPts = slot.wander;
+          // ── CHARACTERS ─────────────────────────────────────────────────────
+          const SPAWN = [
+            { x: W*0.19, y: H*0.36 },
+            { x: W*0.38, y: H*0.46 },
+            { x: W*0.10, y: H*0.66 },
+            { x: W*0.38, y: H*0.72 },
+          ];
+          agents.slice(0, DESK_LAYOUT.length).forEach((ag, i) => {
+            const sp = SPAWN[i] ?? { x: W*0.20, y: H*0.50 };
+            const cd = this.buildVoxelAgent(ag, sp.x, sp.y, 12 + i * 2);
             this.chars.set(ag.id, cd);
             this.applyStatusEffect(cd, ag.status);
-            // Stagger routine start so agents don't sync up
-            this.time.delayedCall(i * 17_000, () => this.scheduleRoutine(cd));
+            this.time.delayedCall(i * 15_000, () => this.scheduleRoutine(cd));
           });
 
           sceneRef.current = this;
         }
 
-        // ── Build a desk (with monitor + keyboard) ─────────────────────────────
-        private buildDeskScene(ox: number, oy: number) {
-          const g = this.add.graphics();
+        // ── SCENE DRAWING ─────────────────────────────────────────────────────
 
+        private drawBackground(W: number, H: number) {
+          const g = this.add.graphics();
+          g.fillStyle(0x1b2029, 1);
+          g.fillRect(0, 0, W, H);
+        }
+
+        private drawFloors(W: number, H: number) {
+          const g = this.add.graphics();
+          const top = H * 0.08;
+          // Workspace floor — warm brown
+          g.fillStyle(0xc8a97e, 1);
+          g.fillRect(0, top, W * 0.575, H - top);
+          // Workspace floor grid
+          g.lineStyle(1, 0xa07850, 0.22);
+          const step = 52;
+          for (let x = 0; x < W * 0.575 + H; x += step) {
+            g.lineBetween(x, top, x - (H - top), H);
+            g.lineBetween(x, top, x + (H - top), H);
+          }
+          // Kitchen floor — cream/light
+          g.fillStyle(0xddd0b8, 1);
+          g.fillRect(W * 0.605, top, W * 0.395, H * 0.395);
+          // Kitchen grid
+          g.lineStyle(1, 0xb8a890, 0.20);
+          for (let x = W * 0.605; x < W + H; x += step) {
+            g.lineBetween(x, top, x - H * 0.395, top + H * 0.395);
+            g.lineBetween(x, top, x + H * 0.395, top + H * 0.395);
+          }
+          // Lounge floor — muted slate blue
+          g.fillStyle(0x8a9bb5, 1);
+          g.fillRect(W * 0.605, top + H * 0.425, W * 0.395, H - top - H * 0.425);
+          // Lounge subtle grid
+          g.lineStyle(1, 0x7a8ba5, 0.20);
+          const lTop = top + H * 0.425;
+          const lH = H - lTop;
+          for (let x = W * 0.605; x < W + lH; x += step) {
+            g.lineBetween(x, lTop, x - lH, H);
+            g.lineBetween(x, lTop, x + lH, H);
+          }
+        }
+
+        private drawWalls(W: number, H: number) {
+          const g = this.add.graphics();
+          const top = H * 0.08;
+          // Workspace back wall
+          g.fillStyle(0x9e8a72, 1);
+          g.fillRect(0, 0, W * 0.575, top);
+          g.lineStyle(1.5, 0x8a7060, 0.7);
+          g.lineBetween(0, top, W * 0.575, top);
+          // Kitchen back wall
+          g.fillStyle(0xc8beb0, 1);
+          g.fillRect(W * 0.605, 0, W * 0.395, top);
+          g.lineStyle(1.5, 0xaaa090, 0.6);
+          g.lineBetween(W * 0.605, top, W, top);
+          // Room border
+          g.lineStyle(3, 0x0d1117, 1);
+          g.strokeRect(0, 0, W, H);
+        }
+
+        private drawDividers(W: number, H: number) {
+          const g = this.add.graphics();
+          const top = H * 0.08;
+          // ── Vertical divider (workspace | right zones) ──────────────────────
+          // Leave a doorway gap at y = H*0.68 to H*0.82
+          const dX = W * 0.577;
+          const dW = W * 0.028;
+          // Wall top segment (no doorway)
+          g.fillStyle(0x5a4a3c, 1);
+          g.fillRect(dX, top, dW, H * 0.62);
+          // Wall side shadow
+          g.fillStyle(0x3a2e24, 1);
+          g.fillRect(dX - 4, top, 4, H * 0.62);
+          // Wall bottom segment (below doorway)
+          g.fillStyle(0x5a4a3c, 1);
+          g.fillRect(dX, top + H * 0.72, dW, H - top - H * 0.72);
+          g.fillStyle(0x3a2e24, 1);
+          g.fillRect(dX - 4, top + H * 0.72, 4, H - top - H * 0.72);
+          // Doorway frame lines
+          g.lineStyle(2, 0x3a2e24, 0.8);
+          g.lineBetween(dX, top + H * 0.62, dX, top + H * 0.72);
+          g.lineBetween(dX + dW, top + H * 0.62, dX + dW, top + H * 0.72);
+          // ── Horizontal divider (kitchen | lounge) ───────────────────────────
+          const hY = top + H * 0.40;
+          const hH = H * 0.025;
+          g.fillStyle(0x6a8090, 1);
+          g.fillRect(W * 0.605, hY, W * 0.395, hH);
+          g.fillStyle(0x4a6070, 1);
+          g.fillRect(W * 0.605, hY, W * 0.395, 3);
+        }
+
+        // ── WORKSPACE DECORATION ──────────────────────────────────────────────
+        private buildWorkspaceDecor(W: number, H: number) {
+          // Two bookshelves along back wall
+          this.buildShelf(W * 0.03, H * 0.01, true);
+          this.buildShelf(W * 0.27, H * 0.01, true);
+          // Plants in corners and along side
+          this.buildPlant(W * 0.50, H * 0.12);
+          this.buildPlant(W * 0.02, H * 0.82);
+          this.buildPlant(W * 0.50, H * 0.82);
+          // Small trash bin near left wall
+          const tb = this.add.graphics();
+          drawIso(tb, W*0.02, H*0.64, 8, 10, 0x3a3a42, 0x28282e, 0x1c1c22);
+        }
+
+        // ── KITCHEN / SERVICE AREA ────────────────────────────────────────────
+        private buildKitchen(W: number, H: number) {
+          const kX = W * 0.61;
+          const kY = H * 0.08;
+          // Vending machine (left of kitchen)
+          this.buildVendingMachine(kX + W*0.02, kY + H*0.04);
+          // Water dispenser
+          this.buildWaterDispenser(kX + W*0.14, kY + H*0.06);
+          // Counter / cabinet along right wall
+          this.buildCounter(kX + W*0.25, kY + H*0.02);
+          // Wall clock
+          this.buildClock(kX + W*0.33, kY + H*0.01, W, H);
+          // Small plant on counter
+          this.buildPlant(kX + W*0.36, kY + H*0.09);
+        }
+
+        // ── MEETING / LOUNGE AREA ─────────────────────────────────────────────
+        private buildLounge(W: number, H: number) {
+          const lX = W * 0.61;
+          const lY = H * 0.08 + H * 0.425;
+          // Picture frame on back wall
+          this.buildPictureFrame(lX + W*0.14, lY + H*0.01);
+          // Bookshelf left side
+          this.buildShelf(lX + W*0.00, lY + H*0.04, false);
+          // Meeting table (center)
+          this.buildMeetingTable(lX + W*0.15, lY + H*0.18);
+          // Two chairs around the table
+          const cg1 = this.add.graphics(); cg1.setDepth(7);
+          this.buildChair(cg1, lX + W*0.13, lY + H*0.26);
+          const cg2 = this.add.graphics(); cg2.setDepth(7);
+          this.buildChair(cg2, lX + W*0.26, lY + H*0.22);
+          // Plants in corners
+          this.buildPlant(lX + W*0.01, lY + H*0.32);
+          this.buildPlant(lX + W*0.36, lY + H*0.08);
+          this.buildPlant(lX + W*0.36, lY + H*0.42);
+          // Right bookshelf
+          this.buildShelf(lX + W*0.27, lY + H*0.02, false);
+        }
+
+        // ── FURNITURE BUILDERS ────────────────────────────────────────────────
+
+        private buildDesk(ox: number, oy: number) {
+          const g = this.add.graphics();
           drawIso(g, ox-14, oy+8,  22, 44, 0x4a6fa5, 0x355090, 0x243878);
           drawIso(g, ox-14, oy+46, 26, 10, 0x5a80c0, 0x4060a0, 0x2e4882);
           drawIso(g, ox+32, oy+22, 54, 9,  0x9b7040, 0x7a5528, 0x5a3d18);
           drawIso(g, ox-18, oy+33, 5, 30, 0x5a3d18, 0x3d2810, 0x2a1c08);
           drawIso(g, ox+78, oy+33, 5, 30, 0x5a3d18, 0x3d2810, 0x2a1c08);
-          drawIso(g, ox-18, oy+60, 5, 5,  0x3d2810, 0x2a1c08, 0x1c1006);
-          drawIso(g, ox+78, oy+60, 5, 5,  0x3d2810, 0x2a1c08, 0x1c1006);
-
           drawIso(g, ox+56, oy+6,  18, 36, 0x222228, 0x161618, 0x0e0e10);
           g.fillStyle(0x1a3a6a, 1);
-          g.beginPath();
-          g.moveTo(ox+56, oy+15);
-          g.lineTo(ox+74, oy+6);
-          g.lineTo(ox+74, oy+38);
-          g.lineTo(ox+56, oy+47);
-          g.closePath();
-          g.fillPath();
+          g.beginPath(); g.moveTo(ox+56,oy+15); g.lineTo(ox+74,oy+6); g.lineTo(ox+74,oy+38); g.lineTo(ox+56,oy+47); g.closePath(); g.fillPath();
           g.fillStyle(0x4f6ef7, 0.18);
-          g.beginPath();
-          g.moveTo(ox+56, oy+15);
-          g.lineTo(ox+74, oy+6);
-          g.lineTo(ox+74, oy+38);
-          g.lineTo(ox+56, oy+47);
-          g.closePath();
-          g.fillPath();
-
+          g.beginPath(); g.moveTo(ox+56,oy+15); g.lineTo(ox+74,oy+6); g.lineTo(ox+74,oy+38); g.lineTo(ox+56,oy+47); g.closePath(); g.fillPath();
           const lines = this.add.graphics();
           lines.lineStyle(1.5, 0x6fa3ef, 0.7);
-          [0,1,2,3].forEach(i => {
-            const x1 = ox+58, x2 = ox+58 + (14 + i*4 % 8);
-            const y1 = oy+18 + i*7;
-            const y2 = y1 - (i*3 % 5);
-            lines.lineBetween(x1, y1, x2, y2);
-          });
-
+          [0,1,2,3].forEach(i => { lines.lineBetween(ox+58, oy+18+i*7, ox+58+(14+i*4%8), oy+18+i*7-(i*3%5)); });
           const kb = this.add.graphics();
           kb.fillStyle(0x3a4060, 1);
-          kb.beginPath();
-          kb.moveTo(ox+14, oy+32);
-          kb.lineTo(ox+56, oy+18);
-          kb.lineTo(ox+56, oy+25);
-          kb.lineTo(ox+14, oy+39);
-          kb.closePath();
-          kb.fillPath();
+          kb.beginPath(); kb.moveTo(ox+14,oy+32); kb.lineTo(ox+56,oy+18); kb.lineTo(ox+56,oy+25); kb.lineTo(ox+14,oy+39); kb.closePath(); kb.fillPath();
         }
 
-        // ── Build a sofa scene ─────────────────────────────────────────────────
-        private buildSofaScene(ox: number, oy: number) {
-          const g = this.add.graphics();
-          drawIso(g, ox, oy,    50, 40, 0x2e3a5c, 0x1e2a4c, 0x121e3a);
-          drawIso(g, ox, oy+36, 55, 14, 0x3a4878, 0x2a3868, 0x1a2858);
-          drawIso(g, ox-44, oy+16, 10, 30, 0x2e3a5c, 0x1e2a4c, 0x121e3a);
-          drawIso(g, ox+44, oy+16, 10, 30, 0x2e3a5c, 0x1e2a4c, 0x121e3a);
-          drawIso(g, ox-16, oy+34, 22, 10, 0x444e7a, 0x343e6a, 0x242e5a);
-          drawIso(g, ox+16, oy+34, 22, 10, 0x444e7a, 0x343e6a, 0x242e5a);
-          drawIso(g, ox+2, oy+78, 32, 5, 0x22263c, 0x161a2e, 0x0e1020);
-          drawIso(g, ox-22, oy+84, 4, 14, 0x161a2e, 0x0e1020, 0x080c18);
-          drawIso(g, ox+26, oy+84, 4, 14, 0x161a2e, 0x0e1020, 0x080c18);
-
-          drawIso(g, ox - 62, oy + 58, 9, 12, 0x7a3a1e, 0x5a2a10, 0x3e1c08);
-          drawIso(g, ox - 62, oy + 55, 8, 3, 0x3d2510, 0x2a180a, 0x1c1006);
-          drawIso(g, ox - 62, oy + 40, 4, 16, 0x2d5a1e, 0x1e3e12, 0x122808);
-          drawIso(g, ox - 62, oy + 30, 14, 10, 0x2a7a28, 0x1a5a1a, 0x0e3e10);
-          drawIso(g, ox - 62, oy + 16, 10, 8, 0x38a030, 0x267a22, 0x185214);
-          drawIso(g, ox - 62, oy + 6,  6, 6, 0x48b83c, 0x309028, 0x1e6018);
-
-          drawIso(g, ox + 72, oy + 58, 10, 4, 0x1e1e22, 0x141416, 0x0c0c0e);
-          drawIso(g, ox + 72, oy + 46, 3, 14, 0x2a2a32, 0x1c1c22, 0x121216);
-          drawIso(g, ox + 72, oy + 34, 3, 12, 0x2a2a32, 0x1c1c22, 0x121216);
-          drawIso(g, ox + 72, oy + 22, 3, 12, 0x2a2a32, 0x1c1c22, 0x121216);
-          drawIso(g, ox + 72, oy + 8,  14, 10, 0xf0d080, 0xc8a840, 0xa07820);
-          g.fillStyle(0xffe080, 0.10);
-          g.fillEllipse(ox + 72 + 14, oy + 18, 44, 22);
-        }
-
-        // ── Build an office chair ──────────────────────────────────────────────
         private buildChair(g: Phaser.GameObjects.Graphics, cx: number, cy: number) {
-          const bx = cx - 2, by = cy - 16;
-          const sx = cx - 2, sy = cy + 10;
-          const px = cx,     py = sy + 16;
-          const bsT = 0x4a62c0, bsC = 0x3a52b0, bsL = 0x2a42a0, bsR = 0x1a3290;
-          const dkC = 0x1c1e2c, dkL = 0x141620, dkR = 0x0c0e14;
-          drawIso(g, bx, by - 22, 16, 32, bsT, bsL, bsR);
+          const bx=cx-2, by=cy-16, sx=cx-2, sy=cy+10, px=cx, py=sy+16;
+          const bsT=0x4a62c0, bsC=0x3a52b0, bsL=0x2a42a0, bsR=0x1a3290;
+          const dkC=0x1c1e2c, dkL=0x141620, dkR=0x0c0e14;
+          drawIso(g, bx, by-22, 16, 32, bsT, bsL, bsR);
           drawIso(g, sx, sy, 22, 8, bsT, bsC, bsR);
           drawIso(g, px, py, 4, 14, dkC, dkL, dkR);
-          drawIso(g, px, py + 12, 18, 4, dkC, dkL, dkR);
-          drawIso(g, px - 14, py + 15, 8, 4, dkC, dkL, dkR);
-          drawIso(g, px + 14, py + 15, 8, 4, dkC, dkL, dkR);
+          drawIso(g, px, py+12, 18, 4, dkC, dkL, dkR);
+          drawIso(g, px-14, py+15, 8, 4, dkC, dkL, dkR);
+          drawIso(g, px+14, py+15, 8, 4, dkC, dkL, dkR);
         }
 
-        // ── Build a voxel character, return full CharData ──────────────────────
+        private buildShelf(ox: number, oy: number, colored: boolean) {
+          const g = this.add.graphics();
+          drawIso(g, ox, oy, 50, 36, 0x7a5528, 0x5a3d18, 0x3e2810);
+          // Book spines
+          const colors = colored
+            ? [0xe05050, 0x4080e0, 0x50c060, 0xe0a030, 0x9050e0, 0xe05090]
+            : [0x6070a0, 0x506080, 0x708090, 0x405060, 0x607080, 0x506070];
+          colors.forEach((c, i) => {
+            drawIso(g, ox - 22 + i*10, oy + 2, 7, 28, c,
+              Phaser.Display.Color.ValueToColor(c).darken(25).color,
+              Phaser.Display.Color.ValueToColor(c).darken(40).color);
+          });
+          // Second shelf row
+          const colors2 = colored
+            ? [0x40c0e0, 0xe06040, 0x80c040]
+            : [0x405870, 0x506070, 0x607080];
+          colors2.forEach((c, i) => {
+            drawIso(g, ox - 12 + i*12, oy + 22, 8, 12, c,
+              Phaser.Display.Color.ValueToColor(c).darken(25).color,
+              Phaser.Display.Color.ValueToColor(c).darken(40).color);
+          });
+        }
+
+        private buildPlant(ox: number, oy: number) {
+          const g = this.add.graphics();
+          drawIso(g, ox, oy+16, 9, 12, 0x7a3a1e, 0x5a2a10, 0x3e1c08);
+          drawIso(g, ox, oy+12, 8, 4,  0x3d2510, 0x2a180a, 0x1c1006);
+          drawIso(g, ox, oy+2,  4, 12, 0x2d5a1e, 0x1e3e12, 0x122808);
+          drawIso(g, ox, oy-8,  14, 10, 0x2a7a28, 0x1a5a1a, 0x0e3e10);
+          drawIso(g, ox, oy-18, 10, 8,  0x38a030, 0x267a22, 0x185214);
+          drawIso(g, ox, oy-26, 6, 6,   0x48b83c, 0x309028, 0x1e6018);
+        }
+
+        private buildVendingMachine(ox: number, oy: number) {
+          const g = this.add.graphics();
+          drawIso(g, ox, oy, 22, 52, 0x2a4a6a, 0x1a3a5a, 0x0e2848);
+          // Display panel
+          g.fillStyle(0x80c8ff, 0.9);
+          g.fillRect(ox-8, oy+10, 16, 20);
+          // Items grid
+          g.fillStyle(0xffb040, 0.8); g.fillRect(ox-6, oy+12, 5, 5);
+          g.fillStyle(0xff5050, 0.8); g.fillRect(ox+2,  oy+12, 5, 5);
+          g.fillStyle(0x50ff80, 0.8); g.fillRect(ox-6, oy+19, 5, 5);
+          g.fillStyle(0xff80c0, 0.8); g.fillRect(ox+2,  oy+19, 5, 5);
+          // Coin slot
+          g.fillStyle(0x888888, 1); g.fillRect(ox+8, oy+28, 4, 2);
+        }
+
+        private buildWaterDispenser(ox: number, oy: number) {
+          const g = this.add.graphics();
+          // Bottle (blue top)
+          drawIso(g, ox, oy, 12, 18, 0x4090d0, 0x2070b0, 0x105090);
+          // Base unit
+          drawIso(g, ox, oy+16, 14, 16, 0xd0ccc4, 0xb0aca4, 0x908c84);
+          // Tap
+          g.fillStyle(0x5090c0, 1);
+          g.fillRect(ox+12, oy+26, 4, 4);
+          g.fillRect(ox+16, oy+28, 4, 2);
+        }
+
+        private buildCounter(ox: number, oy: number) {
+          const g = this.add.graphics();
+          drawIso(g, ox, oy, 40, 8,  0xc8a870, 0xa88850, 0x886830);
+          drawIso(g, ox, oy+6, 38, 22, 0xa88040, 0x886020, 0x684010);
+          // Coffee cup
+          g.fillStyle(0x6a4020, 1); g.fillEllipse(ox+8, oy+8, 8, 4);
+          g.fillStyle(0x4a2010, 1); g.fillRect(ox+4, oy+8, 8, 6);
+        }
+
+        private buildClock(ox: number, oy: number, W: number, H: number) {
+          const g = this.add.graphics();
+          g.fillStyle(0xf0ead8, 1); g.fillCircle(ox, oy, 14);
+          g.lineStyle(2, 0x8a7060, 1); g.strokeCircle(ox, oy, 14);
+          g.lineStyle(2, 0x2a2018, 1);
+          g.lineBetween(ox, oy, ox, oy - 9);       // hour hand
+          g.lineBetween(ox, oy, ox + 8, oy - 4);   // minute hand
+          g.fillStyle(0x2a2018, 1); g.fillCircle(ox, oy, 2);
+        }
+
+        private buildMeetingTable(ox: number, oy: number) {
+          const g = this.add.graphics();
+          drawIso(g, ox, oy, 44, 6, 0x9b7040, 0x7a5528, 0x5a3d18);
+          drawIso(g, ox-14, oy+5, 5, 18, 0x5a3d18, 0x3d2810, 0x2a1c08);
+          drawIso(g, ox+14, oy+5, 5, 18, 0x5a3d18, 0x3d2810, 0x2a1c08);
+          // Laptop on table
+          drawIso(g, ox+4, oy-2, 16, 2, 0x2a2a32, 0x1c1c22, 0x121216);
+          g.fillStyle(0x3a6a9a, 0.9);
+          g.beginPath(); g.moveTo(ox+4,oy-2); g.lineTo(ox+20,oy+6); g.lineTo(ox+20,oy+20); g.lineTo(ox+4,oy+12); g.closePath(); g.fillPath();
+        }
+
+        private buildPictureFrame(ox: number, oy: number) {
+          const g = this.add.graphics();
+          drawIso(g, ox, oy, 36, 2, 0x7a5528, 0x5a3d18, 0x3e2810);
+          // Frame face
+          g.fillStyle(0x7a5528, 1);
+          g.fillRect(ox-18, oy-30, 36, 32);
+          // Sky
+          g.fillStyle(0x6090d0, 1); g.fillRect(ox-14, oy-27, 28, 15);
+          // Landscape
+          g.fillStyle(0x40a050, 1); g.fillRect(ox-14, oy-13, 28, 11);
+          // Sun
+          g.fillStyle(0xffd050, 1); g.fillCircle(ox+8, oy-22, 5);
+        }
+
+        // ── CHARACTER BUILDING ────────────────────────────────────────────────
+
         private buildVoxelAgent(ag: Agent, x: number, y: number, depth: number): CharData {
-          const pantsC = 0x3d4a6e, pantsL = 0x2d3a5e, pantsR = 0x1d2a4e;
-
+          const pantsC=0x3d4a6e, pantsL=0x2d3a5e, pantsR=0x1d2a4e;
           const shadowGfx = this.add.graphics();
-          shadowGfx.fillStyle(0x000000, 0.28);
-          shadowGfx.fillEllipse(0, 48, 36, 12);
-
+          shadowGfx.fillStyle(0x000000, 0.28); shadowGfx.fillEllipse(0, 48, 36, 12);
           const bodyGfx = this.add.graphics();
-
           const leftLegGfx = this.add.graphics();
           drawIso(leftLegGfx, -9, 18, 8, 20, pantsC, pantsL, pantsR);
           drawIso(leftLegGfx, -9, 36, 9, 6, 0x1a1a2e, 0x111122, 0x0a0a18);
-
           const rightLegGfx = this.add.graphics();
           drawIso(rightLegGfx, 9, 18, 8, 20, pantsC, pantsL, pantsR);
           drawIso(rightLegGfx, 9, 36, 9, 6, 0x1a1a2e, 0x111122, 0x0a0a18);
-
           // Name badge
           const nbg = this.add.graphics();
           const dotC = this.statusHex(ag.status);
           const bw = ag.name.length * 9 + 40;
-          nbg.fillStyle(0x0f1322, 0.92);
-          nbg.fillRoundedRect(-bw/2, -15, bw, 30, 5);
-          nbg.fillStyle(dotC, 1);
-          nbg.fillRect(-bw/2, -15, 4, 30);
-          const nameTxt = this.add.text(
-            -bw/2 + 12, 0,
-            ag.name.toUpperCase(),
-            { fontSize:"12px", color:"#ffffff",
-              fontFamily:"Inter, system-ui, sans-serif", fontStyle:"700" }
+          nbg.fillStyle(0x0f1322, 0.92); nbg.fillRoundedRect(-bw/2,-15,bw,30,5);
+          nbg.fillStyle(dotC, 1); nbg.fillRect(-bw/2,-15,4,30);
+          const nameTxt = this.add.text(-bw/2+12, 0, ag.name.toUpperCase(),
+            { fontSize:"12px", color:"#ffffff", fontFamily:"Inter, system-ui, sans-serif", fontStyle:"700" }
           ).setOrigin(0, 0.5);
-          const nameDot = this.add.circle(bw/2 - 12, 0, 5, dotC);
+          const nameDot = this.add.circle(bw/2-12, 0, 5, dotC);
           const nameBadge = this.add.container(0, -100, [nbg, nameTxt, nameDot]);
-
           // Status badge
           const statusBg = this.add.graphics();
           const stLabel = this.statusText(ag.status);
           const sw = stLabel.length * 8 + 28;
-          statusBg.fillStyle(0x1e2438, 0.92);
-          statusBg.fillRoundedRect(-sw/2, -13, sw, 26, 13);
+          statusBg.fillStyle(0x1e2438, 0.92); statusBg.fillRoundedRect(-sw/2,-13,sw,26,13);
           const statusTxt = this.add.text(0, 0, stLabel, {
             fontSize:"12px", color: this.statusColor(ag.status),
             fontFamily:"Inter, system-ui, sans-serif", fontStyle:"600",
           }).setOrigin(0.5);
           const statusBadge = this.add.container(0, 68, [statusBg, statusTxt]);
-
-          // Health warning badge
+          // Health badge
           const hBg = this.add.graphics();
-          hBg.fillStyle(0xef4444, 1);
-          hBg.fillCircle(0, 0, 10);
+          hBg.fillStyle(0xef4444, 1); hBg.fillCircle(0, 0, 10);
           const hTxt = this.add.text(0, 0, "!", {
-            fontSize:"13px", color:"#ffffff",
-            fontFamily:"Inter, system-ui, sans-serif", fontStyle:"800",
+            fontSize:"13px", color:"#ffffff", fontFamily:"Inter, system-ui, sans-serif", fontStyle:"800",
           }).setOrigin(0.5);
           const healthBadge = this.add.container(28, -128, [hBg, hTxt]);
           healthBadge.setVisible(false);
-
           const container = this.add.container(x, y, [
-            shadowGfx, leftLegGfx, rightLegGfx,
-            bodyGfx, nameBadge, statusBadge, healthBadge
+            shadowGfx, leftLegGfx, rightLegGfx, bodyGfx,
+            nameBadge, statusBadge, healthBadge
           ]);
           container.setDepth(depth);
-
           const cd: CharData = {
-            agent: ag,
-            container,
-            bodyGfx,
-            leftLegGfx,
-            rightLegGfx,
-            healthBadge,
-            statusTxt,
-            statusBg,
-            nameDot,
-            deskPos: { x, y },
-            wanderPts: [],
+            agent: ag, container, bodyGfx, leftLegGfx, rightLegGfx,
+            healthBadge, statusTxt, statusBg, nameDot,
+            assignedDeskIdx: -1,
             currentStatus: ag.status,
-            isSitting: false,
-            isWalking: false,
-            routineLocked: false,
-            bobTween: null,
-            typingTween: null,
-            healthPulseTween: null,
+            isSitting: false, isWalking: false, routineLocked: false,
+            bobTween: null, typingTween: null, healthPulseTween: null,
           };
-
           this.redrawBody(cd, false);
           return cd;
         }
 
-        // ── Redraw body graphics (head/torso/arms) ─────────────────────────────
         private redrawBody(cd: CharData, sitting: boolean) {
           if (!cd.bodyGfx) return;
           const shirtC = this.avatarColor(cd.agent.avatar_style);
           const shirtT = Phaser.Display.Color.ValueToColor(shirtC).lighten(8).color;
           const shirtL = Phaser.Display.Color.ValueToColor(shirtC).darken(22).color;
           const shirtR = Phaser.Display.Color.ValueToColor(shirtC).darken(40).color;
-          const skinC = 0xc8915a, skinL = 0xa87040, skinR = 0x8a5a2e;
-          const hairC = 0x2c1b0e, hairL = 0x1e1208, hairR = 0x120c04;
+          const skinC=0xc8915a, skinL=0xa87040, skinR=0x8a5a2e;
+          const hairC=0x2c1b0e, hairL=0x1e1208, hairR=0x120c04;
           cd.bodyGfx.clear();
           drawIso(cd.bodyGfx, 0, -68, 22, 10, hairC, hairL, hairR);
           drawIso(cd.bodyGfx, 0, -46, 20, 26, skinC, skinL, skinR);
-          cd.bodyGfx.fillStyle(0x1a1020, 1);
-          cd.bodyGfx.fillRect(-12, -32, 6, 6);
-          cd.bodyGfx.fillRect(6,   -32, 6, 6);
-          cd.bodyGfx.fillStyle(0x9a6030, 0.7);
-          cd.bodyGfx.fillRect(-5, -20, 10, 2);
+          cd.bodyGfx.fillStyle(0x1a1020,1); cd.bodyGfx.fillRect(-12,-32,6,6); cd.bodyGfx.fillRect(6,-32,6,6);
+          cd.bodyGfx.fillStyle(0x9a6030,0.7); cd.bodyGfx.fillRect(-5,-20,10,2);
           drawIso(cd.bodyGfx, 0, -12, 18, 22, shirtT, shirtL, shirtR);
           if (sitting) {
             drawIso(cd.bodyGfx, -14, 8, 8, 10, skinC, skinL, skinR);
@@ -415,278 +530,310 @@ export function PhaserRoom({ agents, healthMap }: Props) {
           }
         }
 
-        // ── Sit / stand ────────────────────────────────────────────────────────
         private setSitting(cd: CharData, sitting: boolean) {
           cd.isSitting = sitting;
-          if (cd.leftLegGfx)  cd.leftLegGfx.setVisible(!sitting);
-          if (cd.rightLegGfx) cd.rightLegGfx.setVisible(!sitting);
-          if (!sitting) {
-            if (cd.leftLegGfx)  cd.leftLegGfx.y  = 0;
-            if (cd.rightLegGfx) cd.rightLegGfx.y = 0;
-          }
+          cd.leftLegGfx?.setVisible(!sitting);
+          cd.rightLegGfx?.setVisible(!sitting);
+          if (!sitting) { cd.leftLegGfx && (cd.leftLegGfx.y=0); cd.rightLegGfx && (cd.rightLegGfx.y=0); }
           this.redrawBody(cd, sitting);
         }
 
-        // ── Status badge refresh ───────────────────────────────────────────────
         private refreshBadge(cd: CharData, status: AgentStatus) {
           if (!cd.statusTxt) return;
           const label = this.statusText(status);
-          cd.statusTxt.setText(label);
-          cd.statusTxt.setColor(this.statusColor(status));
-          if (cd.nameDot) cd.nameDot.setFillStyle(this.statusHex(status));
+          cd.statusTxt.setText(label); cd.statusTxt.setColor(this.statusColor(status));
+          cd.nameDot?.setFillStyle(this.statusHex(status));
           if (cd.statusBg) {
             cd.statusBg.clear();
             const sw = label.length * 8 + 28;
-            cd.statusBg.fillStyle(0x1e2438, 0.92);
-            cd.statusBg.fillRoundedRect(-sw/2, -13, sw, 26, 13);
+            cd.statusBg.fillStyle(0x1e2438, 0.92); cd.statusBg.fillRoundedRect(-sw/2,-13,sw,26,13);
           }
         }
 
-        // ── Apply visual effect for a status ──────────────────────────────────
-        applyStatusEffect(cd: CharData, status: AgentStatus) {
-          if (cd.bobTween) { cd.bobTween.destroy(); cd.bobTween = null; }
-          cd.container?.setAlpha(1);
-          this.refreshBadge(cd, status);
+        // ── desk claim / release ──────────────────────────────────────────
+        private claimDesk(cd: CharData): { x: number; y: number } | null {
+          // If already assigned, return that desk
+          if (cd.assignedDeskIdx >= 0) {
+            const d = this.deskSeats[cd.assignedDeskIdx];
+            return d ?? null;
+          }
+          // Find a free desk
+          for (let i = 0; i < this.deskSeats.length; i++) {
+            if (!this.deskOccupied.has(i)) {
+              this.deskOccupied.set(i, cd.agent.id);
+              cd.assignedDeskIdx = i;
+              return this.deskSeats[i];
+            }
+          }
+          return null; // all desks full — will wander
+        }
 
-          switch (status) {
-            case "idle":
-              cd.bobTween = this.tweens.add({
-                targets: cd.container, y: "-=4", duration: 2000,
-                yoyo: true, repeat: -1, ease: "Sine.easeInOut",
-              });
-              if (!cd.routineLocked) this.startWander(cd);
-              break;
+        private releaseDesk(cd: CharData) {
+          if (cd.assignedDeskIdx >= 0) {
+            this.deskOccupied.delete(cd.assignedDeskIdx);
+            cd.assignedDeskIdx = -1;
+          }
+        }
 
-            case "working":
-              if (!cd.routineLocked) {
-                cd.routineLocked = true;
-                this.moveTo(cd, cd.deskPos.x, cd.deskPos.y, 1600, () => {
-                  this.playTyping(cd);
-                });
-              }
-              this.time.delayedCall(3 * 60 * 1000, () => {
-                if (cd.currentStatus === "working") this.setStatusInternal(cd, "idle");
-              });
-              break;
+        // ── status effects ────────────────────────────────────────────────
+        private applyStatusEffect(cd: CharData, status: AgentStatus) {
+          this.stopTyping(cd);
+          if (cd.bobTween) { cd.bobTween.stop(); cd.bobTween = null; }
+          if (cd.healthPulseTween) { cd.healthPulseTween.stop(); cd.healthPulseTween = null; }
 
-            case "replying":
-              this.stopTyping(cd);
-              this.tweens.add({
-                targets: cd.container, y: "-=12", duration: 160,
-                yoyo: true, repeat: 3, ease: "Bounce.easeOut",
-              });
-              cd.bobTween = this.tweens.add({
-                targets: cd.nameDot, alpha: 0.2, duration: 300,
-                yoyo: true, repeat: -1,
-              });
-              this.time.delayedCall(15 * 1000, () => {
-                if (cd.currentStatus === "replying") this.setStatusInternal(cd, "idle");
-              });
-              break;
+          cd.container?.setScale(1);
 
-            case "error":
-              this.stopTyping(cd); cd.routineLocked = false;
-              this.tweens.add({
-                targets: cd.container, x: "+=8", duration: 65,
-                yoyo: true, repeat: 7, ease: "Linear",
+          if (status === "working" || status === "replying") {
+            const seat = this.claimDesk(cd);
+            if (seat) {
+              this.moveTo(cd, seat.x, seat.y, WALK_SPEED, () => {
+                this.setSitting(cd, true);
+                if (status === "working") this.playTyping(cd);
+                else {
+                  // bounce animation for replying
+                  cd.bobTween = this.tweens.add({
+                    targets: cd.container,
+                    y: "-=6",
+                    duration: 320,
+                    yoyo: true,
+                    repeat: -1,
+                    ease: "Sine.easeInOut",
+                  });
+                }
               });
-              cd.bobTween = this.tweens.add({
-                targets: cd.container, alpha: 0.45, duration: 450,
-                yoyo: true, repeat: -1,
-              });
-              break;
+            } else {
+              // No desk — stay and show busy
+              this.setSitting(cd, false);
+              if (status === "working") this.playTyping(cd);
+            }
+          } else if (status === "error") {
+            this.setSitting(cd, false);
+            this.releaseDesk(cd);
+            cd.healthPulseTween = this.tweens.add({
+              targets: cd.container,
+              scaleX: 1.12,
+              scaleY: 1.12,
+              duration: 260,
+              yoyo: true,
+              repeat: -1,
+              ease: "Sine.easeInOut",
+            });
+            this.startWander(cd);
+          } else {
+            // idle / offline
+            this.setSitting(cd, false);
+            this.releaseDesk(cd);
+            this.startWander(cd);
           }
         }
 
         private setStatusInternal(cd: CharData, status: AgentStatus) {
-          if (status === cd.currentStatus && !["working","replying","error"].includes(status)) return;
-          if (["working","replying","error"].includes(status)) cd.routineLocked = false;
+          if (cd.currentStatus === status) return;
           cd.currentStatus = status;
+          cd.agent = { ...cd.agent, status };
+          this.refreshBadge(cd, status);
+          cd.routineLocked = true;
           this.applyStatusEffect(cd, status);
-        }
-
-        // ── Public API called from React useEffects ────────────────────────────
-        updateStatus(agentId: string, status: AgentStatus) {
-          const cd = this.chars.get(agentId);
-          if (cd) this.setStatusInternal(cd, status);
-        }
-
-        updateHealth(agentId: string, h: AgentHealth) {
-          const cd = this.chars.get(agentId);
-          if (!cd?.healthBadge) return;
-          cd.healthPulseTween?.destroy();
-          cd.healthPulseTween = null;
-          if (h === "stuck" || h === "slow") {
-            const color = h === "stuck" ? 0xef4444 : 0xf59e0b;
-            const bg = cd.healthBadge.getAt(0) as Phaser.GameObjects.Graphics;
-            bg.clear();
-            bg.fillStyle(color, 1);
-            bg.fillCircle(0, 0, 10);
-            cd.healthBadge.setVisible(true);
-            cd.healthPulseTween = this.tweens.add({
-              targets: cd.healthBadge,
-              scaleX: 1.3, scaleY: 1.3,
-              duration: 600, yoyo: true, repeat: -1, ease: "Sine.easeInOut",
+          // Auto-reset timers
+          if (status === "working") {
+            this.time.delayedCall(WORKING_TIMEOUT, () => {
+              if (cd.currentStatus === "working") this.setStatusInternal(cd, "idle");
             });
-          } else {
-            cd.healthBadge.setVisible(false);
+          } else if (status === "replying") {
+            this.time.delayedCall(REPLYING_TIMEOUT, () => {
+              if (cd.currentStatus === "replying") this.setStatusInternal(cd, "idle");
+            });
           }
         }
 
-        // ── Walking leg animation ──────────────────────────────────────────────
-        update(time: number) {
-          this.chars.forEach((cd) => {
-            if (!cd.isWalking || cd.isSitting) return;
-            const phase = time * 0.007;
-            if (cd.leftLegGfx)  cd.leftLegGfx.y  =  Math.sin(phase) * 9;
-            if (cd.rightLegGfx) cd.rightLegGfx.y = -Math.sin(phase) * 9;
-          });
+        // Public API ─────────────────────────────────────────────────────
+        updateStatus(agentId: string, status: AgentStatus) {
+          const cd = this.chars.get(agentId);
+          if (!cd) return;
+          this.setStatusInternal(cd, status);
         }
 
-        // ── Movement ──────────────────────────────────────────────────────────
-        private moveTo(cd: CharData, tx: number, ty: number, dur: number, onDone?: () => void) {
-          this.tweens.killTweensOf(cd.container);
-          this.setSitting(cd, false);
+        updateHealth(agentId: string, _health: unknown) {
+          const cd = this.chars.get(agentId);
+          if (!cd) return;
+          this.refreshBadge(cd, cd.currentStatus);
+        }
+
+        // ── movement ──────────────────────────────────────────────────────
+        private moveTo(cd: CharData, tx: number, ty: number, dur: number, onComplete?: () => void) {
           cd.isWalking = true;
           this.tweens.add({
-            targets: cd.container, x: tx, y: ty, duration: dur,
+            targets: cd.container,
+            x: tx,
+            y: ty,
+            duration: dur,
             ease: "Sine.easeInOut",
             onComplete: () => {
               cd.isWalking = false;
-              if (cd.leftLegGfx)  cd.leftLegGfx.y  = 0;
-              if (cd.rightLegGfx) cd.rightLegGfx.y = 0;
-              if (onDone) onDone();
+              onComplete?.();
             },
           });
         }
 
         private startWander(cd: CharData) {
-          if (cd.routineLocked || cd.currentStatus !== "idle") return;
-          const wp = Phaser.Utils.Array.GetRandom(cd.wanderPts) as {x:number;y:number};
-          this.moveTo(cd, wp.x, wp.y, 2000, () => {
-            if (!cd.routineLocked && cd.currentStatus === "idle") {
-              this.time.delayedCall(1400, () => this.startWander(cd));
+          if (cd.isSitting) this.setSitting(cd, false);
+          cd.routineLocked = false;
+          this.scheduleRoutine(cd);
+        }
+
+        private scheduleRoutine(cd: CharData) {
+          if (cd.routineLocked) return;
+          const pts = this.wanderPts;
+          const target = pts[Math.floor(Math.random() * pts.length)];
+          const dist = Phaser.Math.Distance.Between(
+            cd.container?.x ?? 0, cd.container?.y ?? 0, target.x, target.y
+          );
+          const dur = Math.max(WANDER_SPEED * 0.4, (dist / 160) * WANDER_SPEED);
+          this.moveTo(cd, target.x, target.y, dur, () => {
+            if (!cd.routineLocked) {
+              this.time.delayedCall(WANDER_PAUSE + Math.random() * 800, () => {
+                this.scheduleRoutine(cd);
+              });
             }
           });
         }
 
         private playTyping(cd: CharData) {
-          cd.container.y -= 14;
-          this.setSitting(cd, true);
+          if (!cd.rightLegGfx) return; // reuse leg object as "hand" bob
           cd.typingTween = this.tweens.add({
-            targets: cd.container, y: "-=2", duration: 220,
-            yoyo: true, repeat: -1, ease: "Sine.easeInOut",
+            targets: cd.rightLegGfx,
+            y: -3,
+            duration: 180,
+            yoyo: true,
+            repeat: -1,
+            ease: "Stepped(2)",
           });
         }
 
         private stopTyping(cd: CharData) {
-          cd.typingTween?.destroy();
-          cd.typingTween = null;
-          cd.container.y = cd.deskPos.y;
-          this.setSitting(cd, false);
+          if (cd.typingTween) { cd.typingTween.stop(); cd.typingTween = null; }
+          cd.rightLegGfx && (cd.rightLegGfx.y = 0);
         }
 
-        // ── Idle routine: work at desk + rest on sofa ──────────────────────────
-        private scheduleRoutine(cd: CharData) {
-          this.time.addEvent({ delay: WORK_INTERVAL, loop: true, callback: () => {
-            if (cd.currentStatus !== "error") this.doWorkAtDesk(cd);
-          }});
-          this.time.addEvent({ delay: REST_INTERVAL, loop: true, callback: () => {
-            if (cd.currentStatus !== "error" && !cd.routineLocked) this.doRestOnSofa(cd);
-          }});
-        }
-
-        private doWorkAtDesk(cd: CharData) {
-          cd.routineLocked = true;
-          cd.currentStatus = "working";
-          this.refreshBadge(cd, "working");
-          this.moveTo(cd, cd.deskPos.x, cd.deskPos.y, 1600, () => {
-            this.playTyping(cd);
-            this.time.delayedCall(WORK_DURATION, () => {
-              this.stopTyping(cd);
-              cd.currentStatus = "idle";
-              this.refreshBadge(cd, "idle");
-              this.moveTo(cd, this.centerPos.x, this.centerPos.y, 1400, () => {
-                cd.routineLocked = false;
-                this.startWander(cd);
-              });
-            });
+        // ── walking leg animation ─────────────────────────────────────────
+        update(time: number) {
+          this.chars.forEach((cd) => {
+            if (!cd.isWalking || cd.isSitting) return;
+            const phase = (time % 600) / 600;
+            const angle = Math.sin(phase * Math.PI * 2);
+            if (cd.leftLegGfx)  cd.leftLegGfx.y  =  angle * 5;
+            if (cd.rightLegGfx) cd.rightLegGfx.y = -angle * 5;
           });
         }
 
-        private doRestOnSofa(cd: CharData) {
-          cd.routineLocked = true;
-          this.moveTo(cd, this.sofaPos.x, this.sofaPos.y, 1600, () => {
-            this.setSitting(cd, true);
-            this.time.delayedCall(REST_DURATION, () => {
-              this.setSitting(cd, false);
-              this.moveTo(cd, this.centerPos.x, this.centerPos.y, 1400, () => {
-                cd.routineLocked = false;
-                this.startWander(cd);
-              });
-            });
-          });
-        }
-
-        // ── Color helpers ──────────────────────────────────────────────────────
-        private statusText(s: AgentStatus): string {
-          return { idle:"Idle", working:"Working", replying:"Replying", error:"Error" }[s];
-        }
-        private statusColor(s: AgentStatus): string {
-          return { idle:"#9ca3af", working:"#fbbf24", replying:"#818cf8", error:"#f87171" }[s];
-        }
-        private statusHex(s: AgentStatus): number {
-          return { idle:0x9ca3af, working:0x22c55e, replying:0x818cf8, error:0xf87171 }[s];
-        }
+        // ── color helpers ─────────────────────────────────────────────────
         private avatarColor(style: string): number {
-          return ({
-            blue:0x3b82f6, purple:0xa855f7, green:0x10b981,
-            amber:0xf59e0b, pink:0xec4899, cyan:0x06b6d4,
-            red:0xef4444, indigo:0x6366f1,
-          } as Record<string,number>)[style] ?? 0x26a996;
+          const map: Record<string, number> = {
+            blue:   0x3b82f6,
+            purple: 0xa855f7,
+            green:  0x10b981,
+            amber:  0xf59e0b,
+            pink:   0xec4899,
+            cyan:   0x06b6d4,
+          };
+          return map[style] ?? 0x6366f1;
+        }
+
+        private statusColor(s: AgentStatus): string {
+          const m: Record<AgentStatus, string> = {
+            idle: "#94a3b8", working: "#fbbf24", replying: "#6366f1", error: "#f87171"
+          };
+          return m[s] ?? "#94a3b8";
+        }
+
+        private statusHex(s: AgentStatus): number {
+          const m: Record<AgentStatus, number> = {
+            idle: 0x94a3b8, working: 0xfbbf24, replying: 0x6366f1, error: 0xf87171
+          };
+          return m[s] ?? 0x94a3b8;
+        }
+
+        private statusText(s: AgentStatus): string {
+          const m: Record<AgentStatus, string> = {
+            idle: "Idle", working: "Working…", replying: "Replying…", error: "Error"
+          };
+          return m[s] ?? s;
         }
       }
 
-      gameRef.current = new Phaser.Game({
+      // ── Phaser game init ──────────────────────────────────────────────────
+      const game = new Phaser.Game({
         type: Phaser.AUTO,
+        width: 900,
+        height: 600,
+        backgroundColor: "#0f1117",
         parent: containerRef.current!,
-        backgroundColor: "#1b2029",
-        scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
         scene: [OfficeScene],
-        banner: false,
+        scale: {
+          mode: Phaser.Scale.FIT,
+          autoCenter: Phaser.Scale.CENTER_BOTH,
+        },
+        render: { antialias: true },
       });
-    });
+
+      gameRef.current = game;
+
+      // ── push status & health into scene once it's ready ──────────────────
+      waitForScene = setInterval(() => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const scene = game.scene.getScene("OfficeScene") as any;
+        if (!scene || !scene.sys.isActive()) return;
+        clearInterval(waitForScene);
+
+        // initial statuses
+        for (const ag of agents) {
+          scene.updateStatus(ag.id, ag.status);
+        }
+
+        sceneRef.current = scene;
+        statusRef.current = Object.fromEntries(agents.map((a) => [a.id, a.status]));
+        healthRef.current = healthMap ?? {};
+      }, 100);
+
+    }); // end import("phaser").then
 
     return () => {
       mounted = false;
-      gameRef.current?.destroy(true);
-      gameRef.current = null;
-      sceneRef.current = null;
+      clearInterval(waitForScene);
+      if (gameRef.current) {
+        gameRef.current.destroy(true);
+        gameRef.current = null;
+        sceneRef.current = null;
+      }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Propagate status changes to the scene
-  const statusKey = agents.map((a) => `${a.id}:${a.status}`).join(",");
-  useEffect(() => {
-    if (!sceneRef.current) return;
-    agents.forEach((a) => sceneRef.current!.updateStatus(a.id, a.status));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusKey]);
+    // ── propagate live status changes ────────────────────────────────────
+    useEffect(() => {
+      const scene = sceneRef.current;
+      if (!scene) return;
+      for (const ag of agents) {
+        const prev = statusRef.current[ag.id];
+        if (prev !== ag.status) {
+          scene.updateStatus(ag.id, ag.status);
+          statusRef.current[ag.id] = ag.status;
+        }
+      }
+    }, [agents]);
 
-  // Propagate health changes to the scene
-  const healthKey = Object.entries(healthMap ?? {}).map(([id, h]) => `${id}:${h}`).join(",");
-  useEffect(() => {
-    if (!sceneRef.current || !healthMap) return;
-    Object.entries(healthMap).forEach(([id, h]) =>
-      sceneRef.current!.updateHealth(id, h)
-    );
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [healthKey]);
+    // ── propagate health changes ─────────────────────────────────────────
+    useEffect(() => {
+      const scene = sceneRef.current;
+      if (!scene) return;
+      for (const [id, h] of Object.entries(healthMap ?? {})) {
+        const prev = healthRef.current[id];
+        if (!prev || prev.label !== h.label) {
+          scene.updateHealth(id, h);
+          healthRef.current[id] = h;
+        }
+      }
+    }, [healthMap]);
 
-  return <div ref={containerRef} className="w-full h-full" />;
-}
-
-type OfficeScene = {
-  updateStatus: (agentId: string, s: AgentStatus) => void;
-  updateHealth: (agentId: string, h: AgentHealth) => void;
-};
+    return <div ref={containerRef} className="w-full h-full" />;
+  }

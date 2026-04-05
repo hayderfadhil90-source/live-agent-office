@@ -30,7 +30,7 @@ export function LiveRoom({ agents: initialAgents, initialEventsMap }: Props) {
       Object.fromEntries(
         agentStates.map(({ agent, events }) => [
           agent.id,
-          getAgentHealth(agent, events).health,
+          getAgentHealth(agent, events),
         ])
       ),
     [agentStates, tick]
